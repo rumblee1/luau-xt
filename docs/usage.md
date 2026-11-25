@@ -143,7 +143,7 @@ Bad Apple and Doom's digital sounds require `AudioStreamWriter`. Roblox restrict
 
 Run `luau --codegen tests/audio.luau` to check the speaker, DMA playback, and Sound Blaster interrupts.
 
-### Windows 3.0 real-mode target
+### Windows 3.0
 
 In Studio, use the MicroProfiler scopes `Luau XT CPU`, `Luau XT VGA Convert`, and `Luau XT VGA Upload` to see the cost of each stage. On the Windows desktop, the renderer tracks changed pixel groups and sends tightly cropped rectangles. Palette changes and Doom's display page flips refresh the frame, using a contiguous conversion when the VGA stride matches the visible width.
 
@@ -163,7 +163,29 @@ For an installer disk, boot the Windows profile and run `C:\SETUP\SETUP.EXE`. Le
 python3 tools/prepare_vga_disk.py --windows-profile --disk-image .boot_media/windows30.img
 ```
 
+To add a separate **386 Windows 3.0 /S** profile, use an installed image that has `HIMEM.SYS` in the root and launches `C:\WINDOWS\WIN.COM /R` or `/S` from `AUTOEXEC.BAT`. The builder enables the XMS driver and sets `WIN /S` in a copy.
+
+```sh
+python3 tools/prepare_vga_disk.py --windows-profile --windows-standard --disk-image .boot_media/windows30.img
+```
+
 The Windows acceptance test is to start with `WIN /R`, open an application in Program Manager, use the mouse, and exit to DOS. The graphics and serial mouse hardware can be checked with `luau --codegen tests/vga.luau`. [Microsoft Windows 3.0 modes](https://www.betaarchive.com/wiki/index.php/Microsoft_KB_Archive/58317)
+
+### Windows 3.1 Standard Mode
+
+Import an installed Windows 3.1 disk image with the setup files in `C:\WINDOWS` and `HIMEM.SYS` in the root. The builder enables XMS and configures `WIN /S` to start automatically on a copy of the disk.
+
+```sh
+python3 tools/prepare_vga_disk.py --windows31-profile --disk-image .boot_media/windows31.img
+```
+
+To build an installer disk from the six 1.44 MB floppy images, install 7-Zip, mtools, and dosfstools.
+
+```sh
+python3 tools/prepare_vga_disk.py --windows31-setup "/path/to/Windows 3.1"
+```
+
+After Rojo sync, select **386 Windows 3.1 /S**. On an installer disk, run `WININST` from the DOS prompt, then run `C:\WINDOWS\WIN.COM /S` after Setup returns to DOS. Setup changes persist across **Restart** within the same Play session. Booting into an installation in a new Play session requires importing an installed disk image.
 
 ## Measure performance in Studio
 

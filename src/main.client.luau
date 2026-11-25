@@ -100,6 +100,22 @@ if atSource then
 		if media:FindFirstChild("vga_windows_disk") then
 			table.insert(profiles, { name = "386 Windows 3.0", at = true, vga = true, disk = "vga_windows_disk" })
 		end
+		if media:FindFirstChild("vga_windows_standard_disk") then
+			table.insert(profiles, {
+				name = "386 Windows 3.0 /S",
+				at = true,
+				vga = true,
+				disk = "vga_windows_standard_disk",
+			})
+		end
+		if media:FindFirstChild("vga_windows31_disk") then
+			table.insert(profiles, {
+				name = "386 Windows 3.1 /S",
+				at = true,
+				vga = true,
+				disk = "vga_windows31_disk",
+			})
+		end
 	end
 end
 

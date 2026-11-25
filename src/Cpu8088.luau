@@ -57,6 +57,12 @@ function Cpu:farTransfer(selector, offset, width, call)
 	self.ip = offset
 end
 
+function Cpu:farReturn(width, discard)
+	self.ip = self:pop(width)
+	self:loadSegment(CS, self:pop(width))
+	self:adjustStack(discard)
+end
+
 function Cpu:restoreFlags(value)
 	self.flags = bor(band(value, 0x0FD5), 0xF002)
 end
@@ -682,11 +688,12 @@ function Cpu:step(repeatLimit)
 		self:setRegister(band(opcode, 7), word, self:fetch(word))
 	elseif opcode == 0xC2 or opcode == 0xC3 or opcode == 0xCA or opcode == 0xCB then
 		local discard = not wide and self:fetch(true) or 0
-		self.ip = self:pop(operandSize)
 		if opcode >= 0xCA then
-			self:loadSegment(CS, self:pop(operandSize))
+			self:farReturn(operandSize, discard)
+		else
+			self.ip = self:pop(operandSize)
+			self:adjustStack(discard)
 		end
-		self:adjustStack(discard)
 	elseif opcode == 0xC4 or opcode == 0xC5 then
 		local register, operand, segment = self:decodeOperand(override)
 		assert(segment ~= nil, "LDS and LES require a memory pointer")

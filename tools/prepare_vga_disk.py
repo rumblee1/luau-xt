@@ -90,6 +90,43 @@ def unpack_windows_setup(archive, target, work):
         raise ValueError("The Windows setup disks did not contain SETUP.EXE")
 
 
+def unpack_windows31_setup(directory, tree):
+    disks = {}
+    for image in sorted(directory.glob("*")):
+        if image.suffix.lower() != ".img" or image.stat().st_size != 1474560:
+            continue
+        names = subprocess.check_output(["mdir", "-b", "-i", image, "::/"], text=True)
+        markers = re.findall(r"^::/DISK([1-6])\s*$", names, flags=re.I | re.M)
+        if len(markers) == 1:
+            number = int(markers[0])
+            if number in disks:
+                raise ValueError(f"Multiple Windows 3.1 images identify as disk {number}")
+            disks[number] = image
+    if set(disks) != set(range(1, 7)):
+        raise ValueError("Expected the six 1.44 MB Windows 3.1 disks with DISK1 through DISK6 markers")
+
+    setup = tree / "SETUP"
+    setup.mkdir()
+    for number in range(1, 7):
+        subprocess.run(["mcopy", "-n", "-i", disks[number], "::*", setup], check=True)
+    for name in ("SETUP.EXE", "SETUP.INF", "HIMEM.SY_"):
+        if not (setup / name).is_file():
+            raise ValueError(f"The Windows 3.1 disks did not contain {name}")
+
+    # The retail media supplies the XMS driver in Microsoft SZDD format.
+    with (tree / "HIMEM.SYS").open("wb") as driver:
+        subprocess.run(["7z", "e", "-so", setup / "HIMEM.SY_"], stdout=driver, check=True)
+    (tree / "CONFIG.SYS").write_bytes(b"FILES=40\r\nBUFFERS=30\r\nDEVICE=C:\\HIMEM.SYS\r\n")
+    (tree / "TEMP").mkdir()
+    (setup / "LUAUXT.SHH").write_bytes(
+        b"[sysinfo]\r\nshowsysinfo=no\r\n"
+        b"[configuration]\r\nmachine=ibm_compatible\r\ndisplay=vga\r\nmouse=ps2mouse\r\n"
+        b'[windir]\r\nC:\\WINDOWS\r\n[userinfo]\r\n"Luau XT"\r\n'
+        b"[endinstall]\r\nconfigfiles=dontsave\r\nendopt=exit\r\n"
+    )
+    (tree / "WININST.BAT").write_bytes(b"@ECHO OFF\r\nCD \\SETUP\r\nSETUP /H:LUAUXT.SHH\r\n")
+
+
 def read_disk_modules(folder):
     """Decode the existing generated VGA disk before updating its FAT volume."""
     index = (folder / "Index.luau").read_text(encoding="ascii")
@@ -182,6 +219,48 @@ def update_library(folder, work, clip, bad_apple, fastdoom=None):
     return disk.read_bytes()
 
 
+def windows_standard_image(image, work, *, windows31=False):
+    disk = work / "windows_standard.img"
+    disk.write_bytes(image)
+    partitions = image[446:510]
+    start = next(
+        (struct.unpack_from("<I", partitions, offset + 8)[0]
+         for offset in range(0, len(partitions), 16)
+         if partitions[offset] == 0x80 and partitions[offset + 4] in (0x01, 0x04, 0x06, 0x0B, 0x0C, 0x0E)),
+        0,
+    )
+    if not 0 < start * SECTOR_SIZE < len(image):
+        raise ValueError("Standard Mode requires an active FAT partition")
+    volume = f"{disk}@@{start * SECTOR_SIZE}"
+
+    def read(name):
+        return subprocess.check_output(["mtype", "-i", volume, f"::/{name}"])
+
+    required = ("HIMEM.SYS", "WINDOWS/WIN.COM")
+    if windows31:
+        required += ("WINDOWS/SYSTEM.INI", "WINDOWS/PROGMAN.EXE")
+    for name in required:
+        if subprocess.run(["mdir", "-i", volume, f"::/{name}"], capture_output=True).returncode:
+            raise ValueError(f"Standard Mode requires {name} on the installed disk")
+    config = read("CONFIG.SYS")
+    if not re.search(rb"^ *device\s*=.*himem(?:x)?\.(?:sys|exe)\b", config, flags=re.I | re.M):
+        config = b"DEVICE=C:\\HIMEM.SYS\r\n" + config
+    startup = read("AUTOEXEC.BAT")
+    startup, count = re.subn(
+        rb"^(\s*@?C:\\WINDOWS\\WIN(?:\.COM)?)[ \t]+/[RS]([ \t]*\r?$)",
+        rb"\g<1> /S\2", startup, count=1, flags=re.I | re.M,
+    )
+    if not count:
+        if not windows31:
+            raise ValueError("Expected C:\\WINDOWS\\WIN.COM /R or /S in AUTOEXEC.BAT")
+        startup = startup.rstrip(b"\r\n") + b"\r\nC:\\WINDOWS\\WIN.COM /S\r\n"
+    for name, content in (("CONFIG.SYS", config), ("AUTOEXEC.BAT", startup)):
+        path = work / name
+        path.write_bytes(content)
+        subprocess.run(["mcopy", "-o", "-i", volume, path, f"::/{name}"], check=True)
+    return disk.read_bytes()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, default=ROOT / ".boot_media")
@@ -190,29 +269,42 @@ def main():
     parser.add_argument("--fastdoom", type=Path, help="Official FastDoom_1.3.0.zip release archive")
     parser.add_argument("--windows-setup", type=Path, help="Local Windows 3.0 five-floppy 7z setup archive")
     parser.add_argument("--windows-profile", action="store_true", help="Use the separate 386 Windows 3.0 profile")
+    parser.add_argument("--windows-standard", action="store_true", help="Boot an installed Windows 3.0 disk in Standard Mode")
+    parser.add_argument("--windows31-setup", type=Path, help="Folder containing six Windows 3.1 floppy images")
+    parser.add_argument("--windows31-profile", action="store_true", help="Import a Windows 3.1 disk that boots with WIN /S")
     parser.add_argument("--guest-dir", type=Path, help="Directory of files to copy to C:")
     parser.add_argument("--clip", type=Path, help="VGA clip to install as C:\\VIDEO.VCL")
     parser.add_argument("--bad-apple", type=Path, help="Local video to convert for the BADAPPLE command")
     parser.add_argument("--disk-image", type=Path, help="Bootable raw image with 16 heads and 32 sectors per track")
     parser.add_argument("--update", action="store_true", help="Refresh the library on the existing 386 VGA disk")
     args = parser.parse_args()
+    windows31 = args.windows31_setup is not None or args.windows31_profile
+    windows = bool(args.windows_setup or args.windows_profile or windows31)
+    if windows31 and (args.windows_setup or args.windows_profile or args.windows_standard or args.update):
+        parser.error("Use Windows 3.1 setup or import as a separate build")
+    if args.windows31_setup and (not args.windows31_setup.is_dir() or args.windows31_profile):
+        parser.error("--windows31-setup requires a floppy folder and builds its own disk")
+    if args.windows31_profile and not args.disk_image:
+        parser.error("--windows31-profile requires --disk-image")
+    if args.windows_standard and not (args.windows_profile and args.disk_image):
+        parser.error("--windows-standard requires --windows-profile and an installed --disk-image")
     if args.update and (args.disk_image or args.doom_shareware or args.windows_setup or args.windows_profile or args.guest_dir):
         parser.error("--update uses the existing FreeDOS VGA disk and accepts --clip, --bad-apple, or --fastdoom")
     if args.update and not (args.output / "vga_hard_disk" / "Index.luau").is_file():
         parser.error("--update requires an existing VGA hard disk in --output")
-    if args.disk_image and (args.guest_dir or args.clip or args.bad_apple or args.doom_shareware or args.windows_setup):
+    if args.disk_image and (args.guest_dir or args.clip or args.bad_apple or args.doom_shareware or args.windows_setup or args.windows31_setup):
         parser.error("--disk-image takes a complete disk. Build a new FreeDOS disk to add files.")
     if args.guest_dir and not args.guest_dir.is_dir():
         parser.error("--guest-dir must be a directory")
     if args.bad_apple:
         if not args.bad_apple.is_file():
             parser.error("--bad-apple must point to a local video file")
-        if args.windows_setup or args.windows_profile:
+        if windows:
             parser.error("--bad-apple installs the clip on the FreeDOS VGA disk")
     if args.fastdoom:
         if not args.fastdoom.is_file():
             parser.error("--fastdoom must point to a local FastDoom_1.3.0.zip archive")
-        if args.disk_image or args.windows_setup or args.windows_profile or not (args.update or args.doom_shareware):
+        if args.disk_image or windows or not (args.update or args.doom_shareware):
             parser.error("--fastdoom requires --update on a VGA disk with Doom shareware or --doom-shareware")
     tools = ("as", "objcopy")
     if args.bad_apple:
@@ -221,8 +313,12 @@ def main():
         tools += ("mcopy", "mdir", "mmd", "mtype")
     elif not args.disk_image:
         tools += ("mcopy", "mkfs.fat")
-    if args.windows_setup:
+    if args.windows_setup or args.windows31_setup:
         tools += ("7z",)
+    if args.windows31_setup:
+        tools += ("mdir",)
+    if args.windows_standard or args.windows31_profile:
+        tools += ("mcopy", "mdir", "mtype")
     for tool in tools:
         if shutil.which(tool) is None:
             parser.error(f"Install {tool} first")
@@ -238,6 +334,8 @@ def main():
             image = args.disk_image.read_bytes()
             if image[510:512] != bytes.fromhex("55aa"):
                 parser.error("--disk-image must contain a BIOS boot sector")
+            if args.windows_standard or args.windows31_profile:
+                image = windows_standard_image(image, work, windows31=args.windows31_profile)
         else:
             args.cache.mkdir(parents=True, exist_ok=True)
             release = fetch(args.cache, "FD14-FloppyEdition.zip")
@@ -245,7 +343,7 @@ def main():
             tree.mkdir()
             unpack_dos_system(release, work / "boot-floppy.img", tree)
             write_vga_programs(tree, work)
-            if not (args.windows_setup or args.windows_profile):
+            if not windows:
                 write_library(tree, work)
             if args.doom_shareware:
                 unpack_doom(args.doom_shareware, tree / "DOOM")
@@ -254,9 +352,13 @@ def main():
                     install_fastdoom(args.fastdoom, tree)
             if args.windows_setup:
                 unpack_windows_setup(args.windows_setup, tree / "SETUP", work)
+            if args.windows31_setup:
+                unpack_windows31_setup(args.windows31_setup, tree)
             startup = b"@ECHO OFF\r\nPATH C:\\;A:\\\r\nPROMPT $P$G\r\n"
-            if not (args.windows_setup or args.windows_profile):
+            if not windows:
                 startup += BLASTER
+            if args.windows31_setup:
+                startup += b"SET TEMP=C:\\TEMP\r\n"
             (tree / "AUTOEXEC.BAT").write_bytes(startup)
             write_videos(tree, args.clip, args.bad_apple)
             if args.guest_dir:
@@ -272,7 +374,12 @@ def main():
         args.output.mkdir(parents=True, exist_ok=True)
         if not args.update:
             module(args.output / "DiskRom.luau", option_rom("hard-disk-rom.s", work))
-        profile = "vga_windows_disk" if args.windows_setup or args.windows_profile else "vga_hard_disk"
+        if windows31:
+            profile = "vga_windows31_disk"
+        elif args.windows_standard:
+            profile = "vga_windows_standard_disk"
+        else:
+            profile = "vga_windows_disk" if args.windows_setup or args.windows_profile else "vga_hard_disk"
         folder = args.output / profile
         disk_modules(folder, image)
         print(f"Prepared {len(image) // 1024} KiB of bootable storage for 386 VGA")

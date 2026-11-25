@@ -375,7 +375,7 @@ end
 function Cpu:descriptor(selector, probe)
 	local code = band(selector, 0xFFFC)
 	local offset = band(selector, 0xFFF8)
-	local table = band(selector, 4) == 0 and self.gdt or self.ldt
+	local table = if band(selector, 4) == 0 then self.gdt else self.ldt
 	if table == nil or offset + 7 > table.limit then
 		if probe then
 			return nil
@@ -428,6 +428,10 @@ function Cpu:loadSegment(index, value)
 	local segment
 	if not self:protected() then
 		segment = realSegment(selector)
+		if index ~= CS then
+			-- A real-mode load changes the base but retains the cached limit.
+			segment.limit = self.s[index].limit
+		end
 	elseif band(selector, 0xFFFC) == 0 and index ~= CS and index ~= SS then
 		segment = { selector = selector, unusable = true, base = 0, limit = 0 }
 	else
@@ -738,18 +742,192 @@ function Cpu:taskSwitch(selector, operation)
 	end
 end
 
-function Cpu:farTransfer(selector, offset, width, call)
-	if self:protected() and band(selector, 0xFFFC) ~= 0 then
-		local descriptor = self:descriptor(selector)
-		if descriptor.system and descriptor.kind == 9 then
-			if math.max(self.cpl, band(selector, 3)) > descriptor.dpl then
-				fault(13, band(selector, 0xFFFC))
-			end
-			self:taskSwitch(selector, call and "call" or "jump")
-			return
+local function stackOffset(segment, offset)
+	return band(offset, if segment.big then UINT32 else UINT16)
+end
+
+function Cpu:clearOuterSegments(level)
+	for _, index in { ES, DS, FS, GS } do
+		local segment = self.s[index]
+		if segment.dpl ~= nil and not segment.conforming and segment.dpl < level then
+			self:loadSegment(index, 0)
 		end
 	end
-	return Cpu8088.farTransfer(self, selector, offset, width, call)
+end
+
+function Cpu:enterCodeSegment(target, ip)
+	target.selector = band(target.selector, 0xFFFC) + self.cpl
+	self.s[CS] = target
+	self.codeMask = if target.big then UINT32 else UINT16
+	self.ip = ip
+end
+
+function Cpu:transferThroughCallGate(gate, call)
+	local gateCode = band(gate.selector, 0xFFFC)
+	if math.max(self.cpl, band(gate.selector, 3)) > gate.dpl then
+		fault(13, gateCode)
+	end
+	if not gate.present then
+		fault(11, gateCode)
+	end
+
+	local low = self:readLinear(gate.address, 4, true)
+	local high = self:readLinear(gate.address + 4, 4, true)
+	local selector = shiftRight(low, 16)
+	local targetCode = band(selector, 0xFFFC)
+	if targetCode == 0 then
+		fault(13, 0)
+	end
+	local target = self:descriptor(selector)
+	if
+		not target.executable
+		or target.dpl > self.cpl
+		or (not call and not target.conforming and target.dpl ~= self.cpl)
+	then
+		fault(13, targetCode)
+	end
+	if not target.present then
+		fault(11, targetCode)
+	end
+	local width = if gate.kind == 12 then 32 else true
+	local offset = band(low, UINT16) + (if width == 32 then band(high, 0xFFFF0000) else 0)
+	if offset > target.limit then
+		fault(13, 0)
+	end
+
+	if call and not target.conforming and target.dpl < self.cpl then
+		local tr = self.tr
+		if not tr then
+			fault(10, 0)
+		end
+		local slot = if tr.big then 4 + target.dpl * 8 else 2 + target.dpl * 4
+		local pointerSize = if tr.big then 4 else 2
+		if slot + pointerSize + 1 > tr.limit then
+			fault(10, band(tr.selector, 0xFFFC))
+		end
+		local pointer = self:readLinear(tr.base + slot, pointerSize, true)
+		local ss = self:readLinear(tr.base + slot + pointerSize, 2, true)
+		local stackCode = band(ss, 0xFFFC)
+		local stack = if stackCode ~= 0 then self:descriptor(ss, true) else nil
+		if not stack or not stack.writable or stack.dpl ~= target.dpl or band(ss, 3) ~= target.dpl then
+			fault(10, stackCode)
+		end
+		if not stack.present then
+			fault(12, stackCode)
+		end
+
+		local oldStack, oldPointer = self.s[SS], self.r[5]
+		local size = widthBytes(width)
+		local words = { self.ip, self:selector(CS) }
+		for index = 0, band(high, 31) - 1 do
+			words[#words + 1] = self:read(oldStack, stackOffset(oldStack, oldPointer + index * size), width)
+		end
+		words[#words + 1] = oldPointer
+		words[#words + 1] = self:selector(SS)
+		local newPointer = stackOffset(stack, pointer - #words * size)
+		for index, word in words do
+			local address =
+				self:segmentAddress(stack, stackOffset(stack, newPointer + (index - 1) * size), size, true, true)
+			self:writeLinear(address, size, word, true)
+		end
+		self.cpl, self.s[SS], self.r[5] = target.dpl, stack, newPointer
+	elseif call then
+		self:push(self:selector(CS), width)
+		self:push(self.ip, width)
+	end
+	self:enterCodeSegment(target, offset)
+end
+
+function Cpu:farReturn(width, discard)
+	if not self:protected() then
+		return Cpu8088.farReturn(self, width, discard)
+	end
+	local stack, pointer = self.s[SS], self.r[5]
+	local size = widthBytes(width)
+	local ip = self:read(stack, stackOffset(stack, pointer), width)
+	local cs = band(self:read(stack, stackOffset(stack, pointer + size), width), UINT16)
+	local level, code = band(cs, 3), band(cs, 0xFFFC)
+	if code == 0 or level < self.cpl then
+		fault(13, code)
+	end
+	local target = self:descriptor(cs)
+	if
+		not target.executable
+		or (target.conforming and target.dpl > level)
+		or (not target.conforming and target.dpl ~= level)
+	then
+		fault(13, code)
+	end
+	if not target.present then
+		fault(11, code)
+	end
+	if ip > target.limit then
+		fault(13, 0)
+	end
+	local consumed = 2 * size + discard
+	if level > self.cpl then
+		local oldPointer = self:read(stack, stackOffset(stack, pointer + consumed), width)
+		local ss = band(self:read(stack, stackOffset(stack, pointer + consumed + size), width), UINT16)
+		local stackCode = band(ss, 0xFFFC)
+		if stackCode == 0 or band(ss, 3) ~= level then
+			fault(13, stackCode)
+		end
+		local oldStack = self:descriptor(ss)
+		if not oldStack.writable or oldStack.dpl ~= level then
+			fault(13, stackCode)
+		end
+		if not oldStack.present then
+			fault(12, stackCode)
+		end
+		self.cpl, self.s[SS], self.r[5] = level, oldStack, oldPointer
+		self:adjustStack(discard)
+		self:clearOuterSegments(level)
+	else
+		self:adjustStack(consumed)
+	end
+	self:enterCodeSegment(target, ip)
+end
+
+function Cpu:farTransfer(selector, offset, width, call)
+	if not self:protected() then
+		return Cpu8088.farTransfer(self, selector, offset, width, call)
+	end
+	local code, rpl = band(selector, 0xFFFC), band(selector, 3)
+	if code == 0 then
+		fault(13, 0)
+	end
+	local target = self:descriptor(selector)
+	if target.system and (target.kind == 4 or target.kind == 12) then
+		return self:transferThroughCallGate(target, call)
+	end
+	if target.system and target.kind == 9 then
+		if math.max(self.cpl, rpl) > target.dpl then
+			fault(13, code)
+		end
+		self:taskSwitch(selector, call and "call" or "jump")
+		return
+	end
+	local level = self.cpl
+	if
+		not target.executable
+		or target.dpl > level
+		or (not target.conforming and (target.dpl ~= level or rpl > level))
+	then
+		fault(13, code)
+	end
+	if not target.present then
+		fault(11, code)
+	end
+	if offset > target.limit then
+		fault(13, 0)
+	end
+	-- A missing code segment can be loaded by the guest fault handler.
+	-- Leave the caller's stack intact so the far call can be retried.
+	if call then
+		self:push(self:selector(CS), width)
+		self:push(self.ip, width)
+	end
+	self:enterCodeSegment(target, offset)
 end
 
 function Cpu:iret(width)
@@ -773,12 +951,7 @@ function Cpu:iret(width)
 			self:loadSegment(CS, cs)
 			self:loadSegment(SS, ss)
 			self.r[5] = stack
-			for _, index in { ES, DS, FS, GS } do
-				local seg = self.s[index]
-				if seg.dpl ~= nil and not seg.conforming and seg.dpl < level then
-					self:loadSegment(index, 0)
-				end
-			end
+			self:clearOuterSegments(level)
 		else
 			self:loadSegment(CS, cs)
 			self:restoreFlags(flags, width)
@@ -1110,6 +1283,14 @@ function Cpu:extendedOpcode(opcode, width, override)
 				local accessAddress = descriptor.address + 5
 				self:writeLinear(accessAddress, 1, bor(self:readLinear(accessAddress, 1, true), 2))
 			end
+		elseif operation == 4 or operation == 5 then -- VERR / VERW
+			local selector = self:readOperand(operand, segment, true)
+			local target = if band(selector, 0xFFFC) ~= 0 then self:descriptor(selector, true) else nil
+			local valid = target
+				and not target.system
+				and (target.conforming or target.dpl >= math.max(self.cpl, band(selector, 3)))
+				and (if operation == 4 then target.readable else target.writable)
+			self.flags = bor(band(self.flags, bnot(ZF)), if valid then ZF else 0)
 		else
 			fault(6)
 		end
@@ -1284,6 +1465,8 @@ function Cpu:extendedOpcode(opcode, width, override)
 		if value ~= 0 then
 			self:setRegister(register, width, opcode == 0xBC and bit32.countrz(value) or 31 - bit32.countlz(value))
 		end
+	elseif opcode == 0xFF then -- Reserved encoding
+		fault(6)
 	else
 		error(string.format("Unsupported 386 opcode 0F %02X at %04X:%08X", opcode, self:selector(CS), self.ip - 2), 0)
 	end
