@@ -1,0 +1,13 @@
+{
+  "name": "Luau XT Emulator",
+  "emitLegacyScripts": false,
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "luau_xt": {
+        "$path": "src"
+      }
+    }
+  }
+}

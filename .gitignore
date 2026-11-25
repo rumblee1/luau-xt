@@ -1,0 +1,15 @@
+# Local downloads, media, and Roblox build output
+/.boot_media/
+/.boot-media/
+/src/media/
+*.img
+*.iso
+*.rom
+*.wad
+*.vcl
+*.rbxl
+*.rbxlx
+/sourcemap.json
+
+__pycache__/
+*.pyc
