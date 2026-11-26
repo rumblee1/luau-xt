@@ -1,55 +1,84 @@
 # Usage
 
-See the [quick start](../README.md#quick-start) for the initial firmware and disk import.
+For your first boot, follow the [quick start](../README.md#quick-start). This guide covers choosing an image, adding files, and dealing with boot problems.
 
-## Hardware and boot profiles
+## Choose a disk image
 
-| Component | Luau XT |
+A raw disk image contains the disk's sectors in order. For a first boot, use an image you already know is bootable, such as a hard disk with DOS installed or a DOS boot floppy.
+
+| Image | What Luau XT accepts |
 | --- | --- |
-| CPU | 386 core with the additional instructions used by the stock SeaBIOS build |
-| Memory | 640 KiB conventional RAM and 15 MiB extended RAM |
-| Firmware | SeaBIOS 1.17.0 and SeaVGABIOS |
-| Storage | One 360 KiB floppy and up to two IDE disks |
-| Video | 80×25 text, 320×200 indexed graphics, and 640×480 planar graphics |
-| Input and sound | PC keyboard, Microsoft serial mouse on COM1, PC speaker, and Sound Blaster-compatible audio |
+| Hard disk | A raw IDE image with 1–127 whole 256 KiB cylinders. For cylinder/head/sector (CHS) addressing, use 16 heads and 32 sectors per track. |
+| Floppy | A raw 360 KiB image. |
 
-Click the profile button to cycle through the systems with media available, then click **Power on**. **Restart** preserves disks in the current Play session. Selecting a different system and powering it on loads that system's generated image. A fresh Play session also starts from the generated images.
-
-Luau XT uses the original SeaBIOS and SeaVGABIOS binaries from QEMU 10.1.0. The media builder checks both SHA-256 digests. The emulator provides Intel 440FX shadow memory, QEMU's firmware configuration ports, and IDE. The client scheduler paces guest time against the 1.193 MHz PIT. [SeaBIOS source](https://qemu.googlesource.com/seabios/+/refs/tags/rel-1.17.0) · [QEMU firmware configuration](https://www.qemu.org/docs/master/specs/fw_cfg.html)
-
-## Import your own media
-
-`tools/media.py` reads local files and writes media modules under `src/media/`. Rojo sync is a separate step. The importer creates new entries and rejects names that already exist. Use `--output` to write to a different media folder.
-
-Import firmware once with `import-firmware`. Use the two QEMU 10.1.0 ROMs from the quick start and either Linux's `font_8x8.c` or a raw 2,048-byte font with 256 eight-row glyphs. The importer checks the ROM hashes. [QEMU ROM files](https://github.com/qemu/qemu/tree/v10.1.0/pc-bios) · [Linux font source](https://github.com/torvalds/linux/blob/v6.12/lib/fonts/font_8x8.c)
-
-Use `inspect` to check the geometry and see the partition layout before importing.
+Run `inspect` to check the size, look for a BIOS boot signature, and list any MBR partitions. A boot signature is required for import as the boot disk. The operating system still needs to boot on the emulated PC.
 
 ```sh
-python3 tools/media.py inspect ./images/windows31.img
+python3 tools/media.py inspect ./images/dos.img
+```
+
+If you're starting from a 360 KiB boot floppy, import it with the same firmware from the quick start.
+
+```sh
 python3 tools/media.py import-floppy ./images/dos-boot.img --name "DOS floppy"
 ```
 
-IDE images must be raw, contain 1–127 whole 256 KiB cylinders, and use 16 heads and 32 sectors per track for CHS addressing. A boot image needs a BIOS boot signature. Use `--attach IMAGE --slot ide1` for a second IDE disk or `--attach IMAGE --slot floppy0` to mount a 360 KiB floppy alongside the boot IDE disk.
+The importer writes its output to `src/media/`. Use `--output` to write elsewhere, for example to try an import without adding a profile to Studio. When you're importing firmware, the font can be Linux's `font_8x8.c` or a raw 2,048-byte font with 256 eight-row glyphs.
 
-### Copy files to a disk
+### What happens when you restart?
 
-Install `mtools` for file copying. The importer copies recursively into a temporary image. If a destination file already exists, the import stops. Your original images stay intact.
+**Restart** keeps changes made to the emulated disks while you stay on that profile in the current Play session. Starting a fresh Play session or powering on another profile loads a fresh copy from the imported image.
 
-```sh
-python3 tools/media.py import-disk ./images/windows31.img \
-  --name "Windows 3.1 with my files" \
-  --copy-from ./my-files --copy-to C:/EXTRAS
-```
+## Add files to a disk
 
-For IDE disks, the file-copy feature supports primary FAT partitions in an MBR. Use `C:/` for the first IDE disk and `D:/` for the second when each attached IDE disk has one primary FAT partition. For other layouts, use an explicit slot and MBR partition number, such as `ide1:1:/EXTRAS`. For a mounted FAT floppy, use `A:/EXTRAS`.
+Install `mtools` on your computer. Put a file named `README.TXT` in `./my-files`, then run this command with a DOS disk that has one primary FAT partition.
 
 ```sh
-python3 tools/media.py import-disk ./images/windows31.img \
-  --name "Windows 3.1 with a data disk" \
-  --attach ./images/data.img --slot ide1 \
-  --copy-from ./my-files --copy-to ide1:1:/EXTRAS
+python3 tools/media.py import-disk ./images/dos.img --name "DOS with my files" --copy-from ./my-files --copy-to C:/EXTRAS
 ```
+
+The importer copies the folder's contents, including subfolders, onto a copy of the disk. Start a new Play session, boot **DOS with my files**, and check for the file from the DOS prompt.
+
+```dos
+DIR C:\EXTRAS
+```
+
+Use `A:/EXTRAS` for a FAT floppy. For hard disks, file copying works with primary FAT partitions in a master boot record (MBR). Files on the original disk image stay intact.
+
+## Attach a second drive
+
+Use `--attach` with `--slot ide1` for a second hard disk, or `--slot floppy0` for a 360 KiB floppy. In this example, DOS boots from `dos.img` and the tool copies files into the first FAT partition on `data.img`.
+
+```sh
+python3 tools/media.py import-disk ./images/dos.img --name "DOS with a data disk" --attach ./images/data.img --slot ide1 --copy-from ./my-files --copy-to ide1:1:/EXTRAS
+```
+
+`ide1:1:/EXTRAS` means the second IDE disk, partition 1, folder `EXTRAS`. You can use `C:/EXTRAS` for the first disk or `D:/EXTRAS` for the second when each attached IDE disk has one primary FAT partition. Use an explicit slot and partition number for other layouts. DOS assigns the drive letters you see after boot.
+
+## Boot Windows 3.1
+
+Start with a compatible raw hard disk image that already has DOS and Windows 3.1 installed.
+
+```sh
+python3 tools/media.py import-disk ./images/windows31.img --name "Windows 3.1"
+```
+
+After Rojo sync, start a new Play session and power on **Windows 3.1**. The disk follows its existing startup settings. If it starts at a DOS prompt, type `WIN /S` to start Windows in Standard Mode.
+
+The Windows profile presents a Microsoft serial mouse on COM1 (03F8h, IRQ4). Move or click over the guest display. Apps can use a serial driver such as CuteMouse with `CTMOUSE /S1`. [CuteMouse manual](https://github.com/FDOS/mouse/blob/master/ctmouse.txt)
+
+To configure waveform audio, open **Control Panel → Drivers → Add**, choose **Creative Labs Sound Blaster 1.5**, and use I/O port **220**, **IRQ 5**, and **DMA 1**. If prompted for the driver disk, enter `C:\SETUP` or point to Windows 3.1 Disk 3. Restart Windows and open `C:\WINDOWS\CHIMES.WAV` in Media Player. Waveform audio uses the emulator's shared Sound Blaster PCM output. [Microsoft driver selection](https://jeffpar.github.io/kbarchive/kb/082/Q82583/) · [Microsoft SYSTEM.INI settings](https://mskb.pkisolutions.com/kb/84752)
+
+## Troubleshoot
+
+| What you see | What to check |
+| --- | --- |
+| The profile is missing in Studio | Check that the import succeeded and wrote to `src/media/`. Connect the Rojo plugin, let it sync, and start a new Play session. With only one available profile, Studio shows its name above **Power on**. |
+| Studio says the firmware is missing | Run `import-firmware` with both QEMU 10.1.0 ROM files and the font from the quick start, then sync again. |
+| The image size is rejected | Run `inspect` and compare the image to the [supported sizes](#choose-a-disk-image). If your image is inside a ZIP archive, extract it first. Use `import-floppy` for a 360 KiB boot floppy. |
+| SeaBIOS starts but DOS never appears | Check that the image has a working boot sector and a bootable OS. If you attached a second disk, try importing the boot disk by itself to narrow down the problem. |
+| A destination file already exists | Pick another destination folder or change the filename in `./my-files`. The import stops on a collision. |
+| The profile name already exists | Use a different `--name` to create a new profile alongside it. |
 
 ## FreeDOS apps, games, and media
 
@@ -99,38 +128,18 @@ Bad Apple and Doom's digital sounds require `AudioStreamWriter`. Roblox restrict
 
 Run `luau --codegen tests/audio.luau` to check the speaker, DMA playback, and Sound Blaster interrupts.
 
-## Windows 3.1 Standard Mode
+## Hardware and boot profiles
 
-The Windows profile presents a Microsoft serial mouse on COM1 (03F8h, IRQ4). Move or click over the guest display. Apps can use a serial driver such as CuteMouse with `CTMOUSE /S1`. [CuteMouse manual](https://github.com/FDOS/mouse/blob/master/ctmouse.txt)
+| Component | Luau XT |
+| --- | --- |
+| CPU | 386 core with the additional instructions used by the stock SeaBIOS build |
+| Memory | 640 KiB conventional RAM and 15 MiB extended RAM |
+| Firmware | SeaBIOS 1.17.0 and SeaVGABIOS |
+| Storage | One 360 KiB floppy and up to two IDE disks |
+| Video | 80×25 text, 320×200 indexed graphics, and 640×480 planar graphics |
+| Input and sound | PC keyboard, Microsoft serial mouse on COM1, PC speaker, and Sound Blaster-compatible audio |
 
-Import a compatible raw disk image with DOS and Windows 3.1 already installed. After sync, choose the imported profile and power on. If the disk starts at a DOS prompt, run `WIN /S`. The profile uses the startup settings already on the disk.
-
-To configure waveform audio, open **Control Panel → Drivers → Add**, choose **Creative Labs Sound Blaster 1.5**, and use I/O port **220**, **IRQ 5**, and **DMA 1**. If prompted for the driver disk, enter `C:\SETUP` or point to Windows 3.1 Disk 3. Restart Windows and open `C:\WINDOWS\CHIMES.WAV` in Media Player. Waveform audio uses the emulator's shared Sound Blaster PCM output. [Microsoft driver selection](https://jeffpar.github.io/kbarchive/kb/082/Q82583/) · [Microsoft SYSTEM.INI settings](https://mskb.pkisolutions.com/kb/84752)
-
-## Measure performance in Studio
-
-The CPU starts with a 4 ms budget per frame and adjusts it within 2–12 ms when the guest falls behind. Indexed VGA mode can use up to 16 ms on slower frames. The scheduler uses recent frame intervals to share time with Roblox, accounts for recent display and audio costs, and limits catch-up to 100 ms of guest time.
-
-In a Play session, switch Studio to **Client** and inspect `PlayerGui.LuauXT.Performance`. Set `AdaptiveCpu` to false for a fixed 4 ms comparison. Use the same profile and workload for both runs. The attributes update every two seconds.
-
-- `DiskLoadMs` measures the **Loading…** stage through machine creation. `FirstVgaMs` measures time from machine creation to the first VGA upload.
-- `GuestClockPercent`, `RobloxFrameP95Ms`, `CpuP95Ms`, and `VgaP95Ms` show guest pace and frame costs. `PresentedVgaFps` counts frames with new guest pixels uploaded.
-- `VgaConvertP95Ms`, `VgaUploadP95Ms`, and `VgaUploadP95KiB` report CPU conversion time, time to pack and submit the pixel buffers, and bytes submitted per frame. These are measured on presented frames in the latest active window.
-- `MouseToUploadP95Ms` measures from Roblox sampling movement to the next VGA upload after the guest reads the last byte of its mouse packet. Use small movements on an idle Windows desktop so the next upload corresponds to the cursor. The last window with mouse samples stays visible after you stop moving.
-
-For a Windows boot comparison, mark the moment Program Manager is visible in the **Client** command bar:
-
-```lua
-game.Players.LocalPlayer.PlayerGui.LuauXT.Performance.Mark:Fire("Windows desktop")
-```
-
-For Doom, enter the command from the DOS prompt in **FreeDOS** and mark the first playable frame. The client recognizes `DOOM`, `DOOM.EXE`, `DOOMFAST`, `DOOMTINY`, and `FASTDOOM` on the prompt when you press Enter. For a batch file or another launcher, use `Mark:Fire("Doom command")` just before launching.
-
-```lua
-game.Players.LocalPlayer.PlayerGui.LuauXT.Performance.Mark:Fire("Doom playable")
-```
-
-The results appear as `WindowsDesktopMs` and `DoomFirstPlayableMs`. For a VGA comparison, move the cursor on the idle Windows desktop, then move or repaint a window. In Doom, use `DOOM -NOSOUND -NOMUSIC -NOMOUSE -WARP 1 1` from the `DOOM` directory and repeat the same movement through E1M1. Compare `RobloxFrameP95Ms`, `GuestClockPercent`, `PresentedVgaFps`, and the three VGA conversion/upload attributes after each workload. The desktop targets are a Roblox 95th-percentile frame time of 20 ms, a Windows guest clock of at least 90%, and at least 20% more presented Doom frames when its guest clock was below real time in the fixed-budget run.
+Luau XT uses the original SeaBIOS and SeaVGABIOS binaries from QEMU 10.1.0. The media builder checks both SHA-256 digests. The emulator provides Intel 440FX shadow memory, QEMU's firmware configuration ports, and IDE. The client scheduler paces guest time against the 1.193 MHz PIT. [SeaBIOS source](https://qemu.googlesource.com/seabios/+/refs/tags/rel-1.17.0) · [QEMU firmware configuration](https://www.qemu.org/docs/master/specs/fw_cfg.html)
 
 ## Verify from the command line
 
