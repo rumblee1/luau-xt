@@ -93,7 +93,9 @@ if media:FindFirstChild("full_disk") then
 	addProfile("FreeDOS Full", "full_disk", floppy)
 end
 addProfile("Linux", "linux_disk")
-addProfile("Windows 3.1", "vga_windows31_disk")
+if media:FindFirstChild("vga_windows31_disk") then
+	addProfile("Windows 3.1", "vga_windows31_disk", floppy)
+end
 addProfile("GRUB", "grub_disk")
 
 if #profiles == 0 then
