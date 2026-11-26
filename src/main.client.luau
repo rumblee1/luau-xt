@@ -19,24 +19,18 @@ gui.Name = "LuauXT"
 gui.ResetOnSpawn = false
 gui:SetAttribute("AudioVolume", 0.65)
 
-local backdrop = Instance.new("Frame")
-backdrop.Size = UDim2.fromScale(1, 1)
-backdrop.BackgroundColor3 = Color3.new(1, 1, 1)
-backdrop.BorderSizePixel = 0
-backdrop.Parent = gui
-
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.Position = UDim2.fromScale(0.5, 0.5)
 panel.Size = UDim2.fromScale(0.92, 0.92)
 panel.BackgroundTransparency = 1
-panel.Parent = backdrop
+panel.Parent = gui
 
 local monitor = Instance.new("Frame")
 monitor.AnchorPoint = Vector2.new(0.5, 0)
 monitor.Position = UDim2.fromScale(0.5, 0)
 monitor.Size = UDim2.new(1, 0, 1, -44)
-monitor.BackgroundColor3 = Color3.new(1, 1, 1)
+monitor.BackgroundColor3 = Color3.new(0, 0, 0)
 monitor.BorderSizePixel = 0
 monitor.Parent = panel
 
@@ -57,7 +51,7 @@ local text = Instance.new("TextLabel")
 text.Size = UDim2.new(1, -24, 1, -24)
 text.Position = UDim2.fromOffset(12, 12)
 text.BackgroundTransparency = 1
-text.TextColor3 = Color3.new(0, 0, 0)
+text.TextColor3 = Color3.fromRGB(224, 226, 224)
 text.Font = Enum.Font.Code
 text.TextSize = 16
 text.TextXAlignment = Enum.TextXAlignment.Left
@@ -70,12 +64,6 @@ local power = Instance.new("TextButton")
 power.AnchorPoint = Vector2.new(0.5, 1)
 power.Position = UDim2.fromScale(0.5, 1)
 power.Size = UDim2.fromOffset(128, 36)
-power.BackgroundColor3 = Color3.new(1, 1, 1)
-power.BorderSizePixel = 1
-power.BorderColor3 = Color3.fromRGB(200, 200, 200)
-power.TextColor3 = Color3.new(0, 0, 0)
-power.Font = Enum.Font.GothamMedium
-power.TextSize = 15
 power.Text = "Power on"
 power.Parent = panel
 
