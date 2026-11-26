@@ -1,11 +1,10 @@
 local band = bit32.band
 
 local FIRST_PORT = 0x1F0
-local CONTROL_PORT = 0x3F6
 local SECTOR_SIZE, HEADS, SECTORS = 512, 16, 32
 local READY, DATA, FAILED = 0x50, 0x58, 0x51
 
-local AtaDisk = { DATA_PORT = FIRST_PORT }
+local AtaDisk = { DATA_PORT = FIRST_PORT, DEVICE_PORT = FIRST_PORT + 6, CONTROL_PORT = 0x3F6 }
 AtaDisk.__index = AtaDisk
 
 local function identifyDisk(cylinders)
@@ -65,9 +64,6 @@ function AtaDisk:command(command)
 	self.transfer, self.writing = nil, false
 	self.status, self.error = READY, 0
 	local registers = self.registers
-	if band(buffer.readu8(registers, 6), 0x10) ~= 0 then
-		return
-	end
 	if command == 0xEC then -- Identify device
 		self.transfer, self.cursor, self.last = self.identify, 0, SECTOR_SIZE
 		self.status = DATA
@@ -144,13 +140,11 @@ function AtaDisk:writeData(value, size)
 end
 
 function AtaDisk.handlesPort(port)
-	return (port >= FIRST_PORT and port <= FIRST_PORT + 7) or port == CONTROL_PORT
+	return (port >= FIRST_PORT and port <= FIRST_PORT + 7) or port == AtaDisk.CONTROL_PORT
 end
 
 function AtaDisk:read(port)
-	if band(buffer.readu8(self.registers, 6), 0x10) ~= 0 then
-		return 0
-	elseif port == CONTROL_PORT or port == FIRST_PORT + 7 then
+	if port == AtaDisk.CONTROL_PORT or port == FIRST_PORT + 7 then
 		return self.status
 	elseif port == FIRST_PORT + 1 then
 		return self.error
@@ -161,7 +155,7 @@ function AtaDisk:read(port)
 end
 
 function AtaDisk:write(port, value)
-	if port == CONTROL_PORT then
+	if port == AtaDisk.CONTROL_PORT then
 		local previous = self.control
 		self.control = value
 		if band(value, 4) ~= 0 then

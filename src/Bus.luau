@@ -247,9 +247,9 @@ function Bus:readIo(port, size)
 	if self.pc and port == PcFirmware.PCI_CONFIG_ADDRESS and size == 4 then
 		return self.pc.pciAddress
 	end
-	local disk = self.pc and port == AtaDisk.DATA_PORT and self.io and self.io.hardDisk
-	if disk then
-		return disk:readData(size)
+	if self.pc and port == AtaDisk.DATA_PORT and self.io and self.io.hardDisk then
+		local disk = self.io:selectedIdeDisk()
+		return if disk then disk:readData(size) else 0
 	end
 	local value = 0
 	for index = 0, size - 1 do
@@ -271,7 +271,10 @@ function Bus:writeIo(port, value, size)
 			self.pc:selectFile(value)
 			return
 		elseif port == AtaDisk.DATA_PORT and self.io and self.io.hardDisk then
-			self.io.hardDisk:writeData(value, size)
+			local disk = self.io:selectedIdeDisk()
+			if disk then
+				disk:writeData(value, size)
+			end
 			return
 		end
 	end

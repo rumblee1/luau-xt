@@ -1,6 +1,6 @@
 # Usage
 
-See the [quick start](../README.md#quick-start) to set up the starter profiles.
+See the [quick start](../README.md#quick-start) for the initial firmware and disk import.
 
 ## Hardware and boot profiles
 
@@ -9,7 +9,7 @@ See the [quick start](../README.md#quick-start) to set up the starter profiles.
 | CPU | 386 core with the additional instructions used by the stock SeaBIOS build |
 | Memory | 640 KiB conventional RAM and 15 MiB extended RAM |
 | Firmware | SeaBIOS 1.17.0 and SeaVGABIOS |
-| Storage | 360 KiB floppy and a primary IDE disk |
+| Storage | One 360 KiB floppy and up to two IDE disks |
 | Video | 80×25 text, 320×200 indexed graphics, and 640×480 planar graphics |
 | Input and sound | PC keyboard, Microsoft serial mouse on COM1, PC speaker, and Sound Blaster-compatible audio |
 
@@ -17,43 +17,43 @@ Click the profile button to cycle through the systems with media available, then
 
 Luau XT uses the original SeaBIOS and SeaVGABIOS binaries from QEMU 10.1.0. The media builder checks both SHA-256 digests. The emulator provides Intel 440FX shadow memory, QEMU's firmware configuration ports, and IDE. The client scheduler paces guest time against the 1.193 MHz PIT. [SeaBIOS source](https://qemu.googlesource.com/seabios/+/refs/tags/rel-1.17.0) · [QEMU firmware configuration](https://www.qemu.org/docs/master/specs/fw_cfg.html)
 
-## Full FreeDOS Floppy Edition
+## Import your own media
 
-To prepare the complete classic-PC bundle, also install dosfstools and run:
+`tools/media.py` reads local files and writes media modules under `src/media/`. Rojo sync is a separate step. The importer creates new entries and rejects names that already exist. Use `--output` to write to a different media folder.
 
-```sh
-python3 tools/install_freedos.py
-```
+Import firmware once with `import-firmware`. Use the two QEMU 10.1.0 ROMs from the quick start and either Linux's `font_8x8.c` or a raw 2,048-byte font with 256 eight-row glyphs. The importer checks the ROM hashes. [QEMU ROM files](https://github.com/qemu/qemu/tree/v10.1.0/pc-bios) · [Linux font source](https://github.com/torvalds/linux/blob/v6.12/lib/fonts/font_8x8.c)
 
-After Rojo sync, select **FreeDOS Full** to boot the 20 MiB FAT16 IDE disk. At `C:\>`, try `VER`, `MEM`, or `DIR FDOS\BIN`. The bundled commands are on the PATH at `C:\FDOS\BIN`. The FreeDOS demo floppy is available as `A:` when generated.
-
-The disk contains all 1,411 files from the official 720 KiB Floppy Edition data disks. Where the 8088 and 386 package variants use the same filename, the 8088 version is in the normal program directory and the 386 variant is in `C:\FD386`. Guest disk changes survive **Restart** during the current Play session.
-
-The Floppy Edition is the classic-PC package set. Tools that require a 286 or 386, extended memory, EGA/VGA, or peripheral hardware need a matching machine. OpenGEM is supplied separately on the FreeDOS Bonus CD.
-
-In FreeDOS EDIT, tap **Alt** and use the arrow keys and **Enter**, or press **Alt+F** to open File. [FreeDOS EDIT guide](https://www.freedos.org/books/get-started/11-using-edit/)
-
-## GRUB and Linux
-
-Build the **GRUB** profile, then press Enter on the first menu entry to run the Multiboot program in extended RAM.
+Use `inspect` to check the geometry and see the partition layout before importing.
 
 ```sh
-python3 tools/prepare_grub.py
+python3 tools/media.py inspect ./images/windows31.img
+python3 tools/media.py import-floppy ./images/dos-boot.img --name "DOS floppy"
 ```
 
-With `debugfs` from e2fsprogs installed, build the **Linux** profile:
+IDE images must be raw, contain 1–127 whole 256 KiB cylinders, and use 16 heads and 32 sectors per track for CHS addressing. A boot image needs a BIOS boot signature. Use `--attach IMAGE --slot ide1` for a second IDE disk or `--attach IMAGE --slot floppy0` to mount a 360 KiB floppy alongside the boot IDE disk.
+
+### Copy files to a disk
+
+Install `mtools` for file copying. The importer copies recursively into a temporary image. If a destination file already exists, the import stops. Your original images stay intact.
 
 ```sh
-python3 tools/prepare_grub.py --freesco
+python3 tools/media.py import-disk ./images/windows31.img \
+  --name "Windows 3.1 with my files" \
+  --copy-from ./my-files --copy-to C:/EXTRAS
 ```
 
-It uses the FREESCO 0.4.5 software-math build of Linux 2.0.40 and its initial RAM disk. Choose **Linux** in Studio and press Enter on the Linux entry in GRUB. Once the ash prompt appears, try `uname -a`, `ls /`, or `pwd`. The disk exposes the bundled BusyBox commands through `/bin` and includes GNU nano 0.9.23 from Debian. Open a file with `nano /tmp/notes.txt`, save with Ctrl+O and Enter, and exit with Ctrl+X. The initial RAM disk is stored as raw ext2 to reduce boot time. [FREESCO release and kernel sources](https://freesco.sourceforge.net/) · [Debian nano package and source](https://archive.debian.org/debian/pool/main/n/nano/)
+For IDE disks, the file-copy feature supports primary FAT partitions in an MBR. Use `C:/` for the first IDE disk and `D:/` for the second when each attached IDE disk has one primary FAT partition. For other layouts, use an explicit slot and MBR partition number, such as `ide1:1:/EXTRAS`. For a mounted FAT floppy, use `A:/EXTRAS`.
 
-To try a different i386 Linux kernel and RAM disk, use `--kernel` and `--initrd` with `--output src/media/linux_disk`.
+```sh
+python3 tools/media.py import-disk ./images/windows31.img \
+  --name "Windows 3.1 with a data disk" \
+  --attach ./images/data.img --slot ide1 \
+  --copy-from ./my-files --copy-to ide1:1:/EXTRAS
+```
 
 ## FreeDOS apps, games, and media
 
-Select **FreeDOS** to boot the library disk on `C:` if generated. The profile boots the demo floppy on `A:` when the library disk is absent. The commands below are on both disks.
+If you already have a Luau XT FreeDOS library disk or demo floppy, boot it to run the included apps.
 
 ```dos
 BMPVIEW SAMPLE.BMP
@@ -77,44 +77,17 @@ In **FreeDOS**, type `VGA` at `C:\>` to list the installed games, tools, and pic
 
 Press Esc to exit games and tools. Any key closes a picture. Guest writes such as `SKETCH.BMP` last for the current Play session, including restarts within that session.
 
-Run `python3 tools/prepare_vga_disk.py` to create a VGA hard disk with the library. Use `--update` to refresh an existing disk. Run `luau --codegen tests/vga-library.luau` to check the guest programs and picture files.
-
 ### Play a local video
 
-If Bad Apple is installed, type `BADAPPLE` at `C:\>` in **FreeDOS**. The video player uses the emulated Sound Blaster to play the soundtrack and pace the frames. Press Esc to return to DOS. To install your own copy, pass the source video to the disk builder.
+If your disk contains `VGACLIP.COM`, copy an existing `.VCL` file into its FAT partition and run `VGACLIP VIDEO.VCL` using the copied file's name. If your disk has the `BADAPPLE` launcher, type `BADAPPLE` from the DOS prompt. Press Esc to exit the player.
 
-```sh
-python3 tools/prepare_vga_disk.py --update --bad-apple BadApple.mov
-```
+The player accepts 128×80 monochrome clips and doubles the pixels on both axes. Sound Blaster playback supports 20 kHz mono soundtracks and earlier 8 kHz clips.
 
-For other local videos, convert a file such as an FFmpeg-readable `.mov`, `.mp4`, `.webm`, or `.mkv` and install it as `VIDEO.VCL`. The converter resizes the picture and creates a `.VCL`. Add `--audio` to the converter command to include the first audio track when available.
+### Doom
 
-```sh
-python3 tools/vga_clip.py input.mp4 VIDEO.VCL
-python3 tools/prepare_vga_disk.py --update --clip VIDEO.VCL
-```
+On disks with the Luau XT Doom launchers, run `DOOMFAST` for a smaller low-detail view with two digital sound channels, or `DOOMFAST -NOSOUND` to disable sound. `DOOMTINY -NOSOUND` uses a 96×48 viewport. On disks with FastDoom, run `FASTDOOM`. Arrow keys move and turn, Ctrl fires, and Space opens doors. Press F10 and then Y to quit.
 
-After syncing and starting a new Play session, select **FreeDOS** and run `VGACLIP VIDEO.VCL` from `C:\>`. For a fresh hard disk, use the same build command without `--update`. The converter encodes 128×80 monochrome frames as changed spans. The guest doubles the pixels on both axes. New soundtracks use 20 kHz mono through two DMA buffers. The player also accepts the earlier 8 kHz clips. The hard disk holds 20 MiB. [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html)
-
-### Doom 1.9 shareware
-
-Build the optional VGA hard disk from the original archive with dosfstools installed. You can combine `--doom-shareware` and `--clip` to put both on one disk. The importer verifies the archive by SHA-256 and extracts the original game files. [Doom 1.9 shareware archive](https://ftp.fu-berlin.de/pc/games/idgames/idstuff/doom/doom19s.zip)
-
-```sh
-python3 tools/prepare_vga_disk.py --doom-shareware doom19s.zip
-```
-
-Sync the disk with Rojo and boot **FreeDOS**. Run `DOOMFAST` from `C:\>` for a smaller low-detail view with two digital sound channels. Startup takes time because the guest initializes the DOS extender and reads the WAD before it switches to VGA. `DOOMFAST -NOSOUND` also disables digital sound. Run `DOOM -NOMUSIC -NOMOUSE -WARP 1 1` from `C:\DOOM>` to use your regular Doom configuration. [id Software's Doom renderer](https://github.com/id-Software/DOOM/blob/master/linuxdoom-1.10/r_main.c)
-
-For the smallest in-game view, run `DOOMTINY -NOSOUND` from `C:\>`. It uses Doom’s 96×48 viewport with low detail. You can increase the view with `+` if the game has enough headroom.
-
-On disks with FastDoom 1.3.0, run `FASTDOOM` from `C:\>` for the faster DOS port. The launcher uses a small viewport, quarter-width detail, flat floors and ceilings, and disables sound. It uses the installed shareware WAD. To add it to an existing VGA disk, pass the official zip to the builder. [FastDoom release](https://github.com/viti95/FastDoom/releases/tag/1.3.0) · [Source for the bundled version](https://github.com/viti95/FastDoom/tree/1.3.0)
-
-```sh
-python3 tools/prepare_vga_disk.py --update --fastdoom FastDoom_1.3.0.zip
-```
-
-Arrow keys move and turn, Ctrl fires, and Space opens doors. Press F10 and then Y to quit. Run `luau --codegen tests/doom.luau` on the prepared disk to check the graphics and quit path.
+From `C:\DOOM`, run `DOOM -NOMUSIC -NOMOUSE -WARP 1 1` to launch with your regular Doom configuration. Startup can take time while the DOS extender initializes and the game reads the WAD.
 
 ### Guest audio
 
@@ -130,19 +103,9 @@ Run `luau --codegen tests/audio.luau` to check the speaker, DMA playback, and So
 
 The Windows profile presents a Microsoft serial mouse on COM1 (03F8h, IRQ4). Move or click over the guest display. Apps can use a serial driver such as CuteMouse with `CTMOUSE /S1`. [CuteMouse manual](https://github.com/FDOS/mouse/blob/master/ctmouse.txt)
 
-Import an installed Windows 3.1 disk image with the setup files in `C:\WINDOWS` and `HIMEM.SYS` in the root. The builder enables XMS and configures `WIN /S` to start automatically on a copy of the disk.
+Import a compatible raw disk image with DOS and Windows 3.1 already installed. After sync, choose the imported profile and power on. If the disk starts at a DOS prompt, run `WIN /S`. The profile uses the startup settings already on the disk.
 
-```sh
-python3 tools/prepare_vga_disk.py --windows31-profile --disk-image .boot_media/windows31.img
-```
-
-To build an installer disk from the six 1.44 MB floppy images, install 7-Zip, mtools, and dosfstools.
-
-```sh
-python3 tools/prepare_vga_disk.py --windows31-setup "/path/to/Windows 3.1"
-```
-
-After Rojo sync, select **Windows 3.1**. On an installer disk, run `WININST` from the DOS prompt, then run `C:\WINDOWS\WIN.COM /S` after Setup returns to DOS. Setup changes persist across **Restart** within the same Play session. Booting into an installation in a new Play session requires importing an installed disk image.
+To configure waveform audio, open **Control Panel → Drivers → Add**, choose **Creative Labs Sound Blaster 1.5**, and use I/O port **220**, **IRQ 5**, and **DMA 1**. If prompted for the driver disk, enter `C:\SETUP` or point to Windows 3.1 Disk 3. Restart Windows and open `C:\WINDOWS\CHIMES.WAV` in Media Player. Waveform audio uses the emulator's shared Sound Blaster PCM output. [Microsoft driver selection](https://jeffpar.github.io/kbarchive/kb/082/Q82583/) · [Microsoft SYSTEM.INI settings](https://mskb.pkisolutions.com/kb/84752)
 
 ## Measure performance in Studio
 
@@ -172,19 +135,17 @@ The results appear as `WindowsDesktopMs` and `DoomFirstPlayableMs`. For a VGA co
 ## Verify from the command line
 
 ```sh
+python3 tests/media_import.py
+luau --codegen tests/ide-drives.luau
+luau --codegen tests/smoke.luau
+```
+
+The importer tests use `mtools` and temporary images. The Luau tests above use synthetic disks or run without media.
+
+```sh
 luau --codegen tests/seabios.luau -a dos
 luau --codegen tests/seabios.luau -a grub
 luau --codegen tests/seabios.luau -a reboot
 ```
 
-The GRUB test uses the disk from `prepare_grub.py`. The reboot test uses the installed FreeDOS disk from `install_freedos.py`. For the older 8088 and GLaBIOS regression tests, generate their fixtures with `python3 tools/prepare_media.py --legacy`.
-
-## Boot media sources
-
-`tools/prepare_media.py` checks the upstream downloads against pinned SHA-256 digests. It repacks the FreeDOS boot sector, kernel, and FreeCOM onto the 360 KiB image and assembles the original guest programs in `guest/`. Generated media and the download cache are ignored by Git.
-
-- GLaBIOS v0.4.2 XT 5160 / 8088 ROM, GPLv3. [ROM release](https://github.com/640-KB/GLaBIOS/releases/tag/v0.4.2) · [Source](https://github.com/640-KB/GLaBIOS/tree/v0.4.2)
-- FreeDOS 1.4 Floppy Edition. [Distribution](https://www.freedos.org/download/) · [Kernel source](https://github.com/FDOS/kernel) · [FreeCOM source](https://github.com/FDOS/freecom)
-- Linux v6.12 8×8 console font, GPL-2.0. [Font source](https://github.com/torvalds/linux/blob/v6.12/lib/fonts/font_8x8.c)
-
-The full-install builder reads the release's File Slicer archives. [File Slicer source](https://gitlab.com/DOSx86/slicer)
+These SeaBIOS cases use the existing `vga_disk`, `grub_disk`, and `full_disk` fixtures, respectively, plus the legacy firmware and font modules under `src/media/`. The older 8088 and GLaBIOS tests also require their original generated fixtures.

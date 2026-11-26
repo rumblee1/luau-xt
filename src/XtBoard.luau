@@ -16,10 +16,13 @@ local BOARD_SWITCHES = 0x2D -- Four RAM banks, 80-column CGA, one floppy drive.
 local Board = {}
 Board.__index = Board
 
-function Board.new(bus, disk, hardDisk, clockRate)
+function Board.new(bus, disk, hardDisk, clockRate, secondHardDisk)
 	local pic = Pic8259.new()
 	local slavePic = bus.at and Pic8259.new()
 	local dma = Dma8237.new()
+	local function ideInterrupt()
+		slavePic:request(6)
+	end
 	local board = setmetatable({
 		pic = pic,
 		serialMouse = bus.vga and SerialMouse.new(function()
@@ -44,11 +47,9 @@ function Board.new(bus, disk, hardDisk, clockRate)
 		soundBlaster = bus.at and SoundBlaster.new(bus, dma, clockRate, function()
 			pic:request(SoundBlaster.IRQ)
 		end),
-		hardDisk = hardDisk and (if bus.pc
-			then AtaDisk.new(hardDisk, function()
-				slavePic:request(6)
-			end)
-			else HardDisk.new(bus, hardDisk)),
+		hardDisk = hardDisk and (if bus.pc then AtaDisk.new(hardDisk, ideInterrupt) else HardDisk.new(bus, hardDisk)),
+		secondHardDisk = secondHardDisk and AtaDisk.new(secondHardDisk, ideInterrupt),
+		ideDevice = 0,
 		floppy = Floppy765.new(bus, dma, disk, function(line)
 			pic:request(line)
 		end),
@@ -288,9 +289,14 @@ function Board:readCmos()
 	return buffer.readu8(self.cmos, index)
 end
 
+function Board:selectedIdeDisk()
+	return if self.ideDevice == 0 then self.hardDisk else self.secondHardDisk
+end
+
 function Board:read(port)
 	if self.bus.pc and self.hardDisk and AtaDisk.handlesPort(port) then
-		return self.hardDisk:read(port)
+		local disk = self:selectedIdeDisk()
+		return if disk then disk:read(port) else 0
 	end
 	if self.hardDisk and not self.bus.pc and port >= 0x340 and port <= 0x347 then
 		return self.hardDisk:read(port)
@@ -351,7 +357,23 @@ end
 
 function Board:write(port, value)
 	if self.bus.pc and self.hardDisk and AtaDisk.handlesPort(port) then
-		self.hardDisk:write(port, value)
+		if port == AtaDisk.CONTROL_PORT then
+			if band(self.hardDisk.control, 4) ~= 0 and band(value, 4) == 0 then
+				self.ideDevice = 0
+			end
+			self.hardDisk:write(port, value)
+			if self.secondHardDisk then
+				self.secondHardDisk:write(port, value)
+			end
+		else
+			if port == AtaDisk.DEVICE_PORT then
+				self.ideDevice = bit32.extract(value, 4)
+			end
+			local disk = self:selectedIdeDisk()
+			if disk then
+				disk:write(port, value)
+			end
+		end
 		return
 	end
 	if self.hardDisk and not self.bus.pc and port >= 0x340 and port <= 0x347 then

@@ -11,6 +11,8 @@
     }
   },
   "globIgnorePaths": [
+    "**/.luau-xt-*",
+    "**/.luau-xt-*/**",
     "src/media/AtBios.luau",
     "src/media/Bios.luau",
     "src/media/BootTest.luau",

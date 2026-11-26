@@ -74,12 +74,7 @@ end
 
 function Performance:mark(label)
 	local now = os.clock()
-	if
-		label == "Windows desktop"
-		and self.poweredAt
-		and self.folder:GetAttribute("Profile") == "Windows 3.1"
-		and self.folder:GetAttribute("WindowsDesktopMs") == nil
-	then
+	if label == "Windows desktop" and self.poweredAt and self.folder:GetAttribute("WindowsDesktopMs") == nil then
 		self.folder:SetAttribute("WindowsDesktopMs", (now - self.poweredAt) * 1000)
 	elseif label == "Doom command" and self.poweredAt then
 		self.doomStartedAt = now

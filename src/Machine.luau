@@ -11,7 +11,7 @@ local Machine = {
 }
 Machine.__index = Machine
 
-local function newMachine(rom, disk, diskRom, hardDisk, atRom, vgaRom, seaBios)
+local function newMachine(rom, disk, diskRom, hardDisk, atRom, vgaRom, seaBios, secondHardDisk)
 	local at = atRom ~= nil or seaBios == true
 	local bus = Bus.new(at)
 	if seaBios then
@@ -34,7 +34,7 @@ local function newMachine(rom, disk, diskRom, hardDisk, atRom, vgaRom, seaBios)
 		rom = rom,
 		diskRom = diskRom,
 		bus = bus,
-		board = XtBoard.new(bus, disk, hardDisk, Machine.PIT_HZ),
+		board = XtBoard.new(bus, disk, hardDisk, Machine.PIT_HZ, secondHardDisk),
 		cpu = if at then Cpu386.new(bus) else Cpu8088.new(bus),
 	}, Machine)
 end
@@ -43,12 +43,14 @@ function Machine.new(rom, disk, diskRom, hardDisk, atRom, vgaRom)
 	return newMachine(rom, disk, diskRom, hardDisk, atRom, vgaRom, false)
 end
 
-function Machine.newSeaBios(rom, vgaRom, disk, hardDisk)
-	return newMachine(rom, disk, nil, hardDisk, nil, vgaRom, true)
+function Machine.newSeaBios(rom, vgaRom, disk, hardDisk, secondHardDisk)
+	assert(not secondHardDisk or hardDisk, "A second IDE disk requires a primary disk")
+	return newMachine(rom, disk, nil, hardDisk, nil, vgaRom, true, secondHardDisk)
 end
 
 function Machine:restart()
 	local hardDisk = self.board.hardDisk
+	local secondHardDisk = self.board.secondHardDisk
 	return newMachine(
 		self.rom,
 		self.board.floppy.image,
@@ -56,7 +58,8 @@ function Machine:restart()
 		hardDisk and hardDisk.image,
 		self.atRom,
 		self.vgaRom,
-		self.bus.firmware ~= nil
+		self.bus.firmware ~= nil,
+		secondHardDisk and secondHardDisk.image
 	)
 end
 

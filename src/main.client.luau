@@ -70,11 +70,12 @@ power.Parent = panel
 gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 local media = modules:WaitForChild("media", 5)
-local seaBiosSource = media and media:WaitForChild("SeaBios", 5)
-local seaVgaSource = media and media:WaitForChild("SeaVgaBios", 5)
-local fontSource = media and media:WaitForChild("Font", 5)
+local firmwareFolder = media and (media:FindFirstChild("Firmware") or media)
+local seaBiosSource = firmwareFolder and firmwareFolder:WaitForChild("SeaBios", 5)
+local seaVgaSource = firmwareFolder and firmwareFolder:WaitForChild("SeaVgaBios", 5)
+local fontSource = firmwareFolder and firmwareFolder:WaitForChild("Font", 5)
 if not seaBiosSource or not seaVgaSource or not fontSource then
-	text.Text = "Boot media is missing. Run tools/prepare_media.py and tools/prepare_seabios.py, then sync with Rojo."
+	text.Text = "Firmware is missing. Run python3 tools/media.py import-firmware --help."
 	power.Visible = false
 	return
 end
@@ -98,12 +99,35 @@ if media:FindFirstChild("vga_windows31_disk") then
 end
 addProfile("GRUB", "grub_disk")
 
+local imported = media:FindFirstChild("Imported")
+if imported then
+	local folders = imported:GetChildren()
+	table.sort(folders, function(a, b)
+		return a.Name < b.Name
+	end)
+	for _, folder in folders do
+		local profile = folder:FindFirstChild("Profile")
+		if profile and profile:IsA("ModuleScript") then
+			local disk = folder:FindFirstChild("HardDisk")
+			local bootFloppy = folder:FindFirstChild("Floppy")
+			local secondDisk = folder:FindFirstChild("SecondHardDisk")
+			if disk or bootFloppy then
+				local ok, name = pcall(require, profile)
+				if ok and type(name) == "string" then
+					table.insert(profiles, { name = name, disk = disk, floppy = bootFloppy, secondDisk = secondDisk })
+				end
+			end
+		end
+	end
+end
+
 if #profiles == 0 then
-	text.Text = "No boot disk found. Run tools/prepare_media.py, then sync with Rojo."
+	text.Text = "No boot disk found. Run python3 tools/media.py --help to import your own disk."
 	power.Visible = false
 	return
 end
 
+text.Text = "Ready to boot " .. profiles[1].name
 local selector
 if #profiles > 1 then
 	selector = power:Clone()
@@ -111,6 +135,7 @@ if #profiles > 1 then
 	selector.AnchorPoint = Vector2.new(1, 1)
 	selector.Position = UDim2.new(0.5, -5, 1, 0)
 	selector.Size = UDim2.fromOffset(148, 36)
+	selector.TextTruncate = Enum.TextTruncate.AtEnd
 	selector.Text = profiles[1].name
 	selector.Parent = panel
 	power.AnchorPoint = Vector2.new(0, 1)
@@ -206,7 +231,8 @@ local function startMachine(profile)
 	local vgaRom = decode(require(seaVgaSource))
 	local floppyImage = profile.floppy and loadDisk(profile.floppy) or nil
 	local hardDisk = profile.disk and loadDisk(profile.disk) or nil
-	return Machine.newSeaBios(firmware, vgaRom, floppyImage, hardDisk)
+	local secondHardDisk = profile.secondDisk and loadDisk(profile.secondDisk) or nil
+	return Machine.newSeaBios(firmware, vgaRom, floppyImage, hardDisk, secondHardDisk)
 end
 
 if selector then
@@ -216,6 +242,9 @@ if selector then
 		end
 		selectedProfile = selectedProfile % #profiles + 1
 		selector.Text = profiles[selectedProfile].name
+		if not machine then
+			text.Text = "Ready to boot " .. profiles[selectedProfile].name
+		end
 		power.Text = selectedProfile == runningProfile and "Restart" or "Power on"
 	end)
 end
