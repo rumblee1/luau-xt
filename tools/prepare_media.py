@@ -1,4 +1,4 @@
-"""Build Luau boot media from the pinned upstream ROM, FreeDOS archive, and font."""
+"""Build the FreeDOS floppy, display font, and optional legacy test media."""
 import argparse
 import base64
 import hashlib
@@ -198,13 +198,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, default=ROOT / ".boot_media")
     parser.add_argument("--output", type=Path, default=ROOT / "src/media")
+    parser.add_argument("--legacy", action="store_true", help="Also generate GLaBIOS fixtures for the legacy tests")
     args = parser.parse_args()
     for tool in ("as", "objcopy", "mformat", "mcopy"):
         if shutil.which(tool) is None:
             parser.error(f"Install {tool} first (GNU binutils and mtools are required)")
     args.cache.mkdir(parents=True, exist_ok=True)
     args.output.mkdir(parents=True, exist_ok=True)
-    bios = fetch(args.cache, "glabios.rom").read_bytes()
     release = fetch(args.cache, "FD14-FloppyEdition.zip")
     font_source = fetch(args.cache, "font_8x8.c").read_text(encoding="utf-8")
     font = bytes(int(value, 16) for value in re.findall(r"^\s*0x([0-9a-f]{2}),", font_source, re.M))
@@ -213,19 +213,17 @@ def main():
     with tempfile.TemporaryDirectory(prefix="luau-xt-") as temporary:
         directory = Path(temporary)
         disk = make_floppy(release, directory)
-        boot = directory / "boot-test.bin"
-        assemble("boot-test.s", boot, directory)
-        boot_test = boot.read_bytes().ljust(len(disk), b"\0")
-        at_bios = option_rom("at-bios-rom.s", directory)
-        vga_bios = option_rom("vga-bios.s", directory)
         vga_disk = make_vga_floppy(disk, directory)
-        bios = system_bios(bios, directory)
-    module(args.output / "Bios.luau", bios)
-    module(args.output / "AtBios.luau", at_bios)
+        if args.legacy:
+            bios = fetch(args.cache, "glabios.rom").read_bytes()
+            module(args.output / "Bios.luau", system_bios(bios, directory))
+            module(args.output / "AtBios.luau", option_rom("at-bios-rom.s", directory))
+            module(args.output / "VgaBios.luau", option_rom("vga-bios.s", directory))
+            module(args.output / "Disk.luau", disk)
+            boot = directory / "boot-test.bin"
+            assemble("boot-test.s", boot, directory)
+            module(args.output / "BootTest.luau", boot.read_bytes().ljust(len(disk), b"\0"))
     module(args.output / "Font.luau", font)
-    module(args.output / "Disk.luau", disk)
-    module(args.output / "BootTest.luau", boot_test)
-    module(args.output / "VgaBios.luau", vga_bios)
     disk_modules(args.output / "vga_disk", vga_disk)
 
 

@@ -77,7 +77,7 @@ function Performance:mark(label)
 	if
 		label == "Windows desktop"
 		and self.poweredAt
-		and self.folder:GetAttribute("Profile") == "386 Windows 3.0"
+		and self.folder:GetAttribute("Profile") == "Windows 3.1"
 		and self.folder:GetAttribute("WindowsDesktopMs") == nil
 	then
 		self.folder:SetAttribute("WindowsDesktopMs", (now - self.poweredAt) * 1000)

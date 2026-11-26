@@ -1,3 +1,4 @@
+local AtaDisk = if script then require(script.Parent.AtaDisk) else require("./AtaDisk")
 local HardDisk = if script then require(script.Parent.HardDisk) else require("./HardDisk")
 local Dma8237 = if script then require(script.Parent.Dma8237) else require("./Dma8237")
 local Floppy765 = if script then require(script.Parent.Floppy765) else require("./Floppy765")
@@ -17,6 +18,7 @@ Board.__index = Board
 
 function Board.new(bus, disk, hardDisk, clockRate)
 	local pic = Pic8259.new()
+	local slavePic = bus.at and Pic8259.new()
 	local dma = Dma8237.new()
 	local board = setmetatable({
 		pic = pic,
@@ -24,7 +26,7 @@ function Board.new(bus, disk, hardDisk, clockRate)
 			pic:request(4)
 		end),
 		bus = bus,
-		slavePic = bus.at and Pic8259.new(),
+		slavePic = slavePic,
 		-- The VGA AT starts with an 8042 output buffer. A guest can read
 		-- subsequent scan codes without pulsing the XT latch on port 61h.
 		atKeyboard = bus.vga ~= nil,
@@ -42,7 +44,11 @@ function Board.new(bus, disk, hardDisk, clockRate)
 		soundBlaster = bus.at and SoundBlaster.new(bus, dma, clockRate, function()
 			pic:request(SoundBlaster.IRQ)
 		end),
-		hardDisk = hardDisk and HardDisk.new(bus, hardDisk),
+		hardDisk = hardDisk and (if bus.pc
+			then AtaDisk.new(hardDisk, function()
+				slavePic:request(6)
+			end)
+			else HardDisk.new(bus, hardDisk)),
 		floppy = Floppy765.new(bus, dma, disk, function(line)
 			pic:request(line)
 		end),
@@ -59,6 +65,12 @@ function Board.new(bus, disk, hardDisk, clockRate)
 	}, Board)
 	if board.cmos then
 		local conventional, extended = bus:ramKiB()
+		if bus.firmware then
+			buffer.writeu8(board.cmos, 0x10, disk and 0x10 or 0)
+			-- SeaBIOS reads the boot order from the lowest nibble first.
+			local bootOrder = if hardDisk then (if disk then 0x12 else 2) else 1
+			buffer.writeu8(board.cmos, 0x3D, bootOrder)
+		end
 		buffer.writeu16(board.cmos, 0x15, conventional)
 		buffer.writeu16(board.cmos, 0x17, extended)
 		buffer.writeu16(board.cmos, 0x30, extended)
@@ -170,6 +182,14 @@ function Board:writeKeyboardCommand(value)
 		self.kbcResponse = 0
 	elseif value == 0xD0 then
 		self.kbcResponse = self.bus.a20 and 3 or 1
+	elseif value == 0xAD then
+		self.kbcConfig = bit32.bor(self.kbcConfig, 0x10)
+	elseif value == 0xAE then
+		self.kbcConfig = band(self.kbcConfig, 0xEF)
+	elseif value == 0xA7 then
+		self.kbcConfig = bit32.bor(self.kbcConfig, 0x20)
+	elseif value == 0xA8 then
+		self.kbcConfig = band(self.kbcConfig, 0xDF)
 	end
 	self.kbcCommand = value
 end
@@ -181,6 +201,9 @@ function Board:writeKeyboardData(value)
 		self.kbcConfig = value
 	else
 		self.kbcResponse = 0xFA
+		if value == 0xFF then -- Keyboard reset: ACK followed by self-test passed.
+			self.kbcNextResponse = 0xAA
+		end
 		if band(self.kbcConfig, 1) ~= 0 then
 			self.pic:request(1)
 		end
@@ -266,7 +289,10 @@ function Board:readCmos()
 end
 
 function Board:read(port)
-	if self.hardDisk and port >= 0x340 and port <= 0x347 then
+	if self.bus.pc and self.hardDisk and AtaDisk.handlesPort(port) then
+		return self.hardDisk:read(port)
+	end
+	if self.hardDisk and not self.bus.pc and port >= 0x340 and port <= 0x347 then
 		return self.hardDisk:read(port)
 	elseif self.soundBlaster and port >= SoundBlaster.BASE and port < SoundBlaster.BASE + 0x10 then
 		return self.soundBlaster:read(port)
@@ -287,7 +313,11 @@ function Board:read(port)
 	elseif port == 0x60 then
 		if self.atKeyboard then
 			local data = self.kbcResponse
-			self.kbcResponse = nil
+			self.kbcResponse = self.kbcNextResponse
+			self.kbcNextResponse = nil
+			if self.kbcResponse and band(self.kbcConfig, 1) ~= 0 then
+				self.pic:request(1)
+			end
 			if data == nil then
 				data = self.scanCode or 0
 				self.scanCode = nil
@@ -320,7 +350,11 @@ function Board:read(port)
 end
 
 function Board:write(port, value)
-	if self.hardDisk and port >= 0x340 and port <= 0x347 then
+	if self.bus.pc and self.hardDisk and AtaDisk.handlesPort(port) then
+		self.hardDisk:write(port, value)
+		return
+	end
+	if self.hardDisk and not self.bus.pc and port >= 0x340 and port <= 0x347 then
 		self.hardDisk:write(port, value)
 	elseif self.soundBlaster and port >= SoundBlaster.BASE and port < SoundBlaster.BASE + 0x10 then
 		self.soundBlaster:write(port, value, self.pit.now)

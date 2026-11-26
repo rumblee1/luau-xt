@@ -1,6 +1,6 @@
 # Luau XT
 
-A PC emulator written in Luau for Roblox, with 8088 and experimental 386 profiles. It boots FreeDOS and emulates CGA text, VGA graphics, a keyboard, a serial mouse, and basic sound hardware.
+A 386 PC emulator written in Luau for Roblox. It uses stock SeaBIOS and emulates VGA, IDE storage, keyboard and mouse input, and Sound Blaster audio.
 
 ## Quick start
 
@@ -8,17 +8,18 @@ Install Python 3, GNU binutils with x86 support, mtools, and Rojo 7.7.1. The pin
 
 ```sh
 python3 tools/prepare_media.py
+python3 tools/prepare_seabios.py
 rojo serve
 ```
 
-Connect the Rojo plugin to an empty Roblox Studio place, start **Play**, and click **Power on**. At the FreeDOS prompt, run `HELLO`. For VGA demos, select **386 VGA** before powering on and run `BMPVIEW SAMPLE.BMP`.
+Connect the Rojo plugin to an empty Roblox Studio place and start **Play**. Choose **FreeDOS**, click **Power on**, and run `BMPVIEW SAMPLE.BMP`.
 
 ## Tests
 
 Install the Luau CLI, then run:
 
 ```sh
-luau --codegen tests/smoke.luau tests/boot.luau tests/vga.luau
+luau --codegen tests/seabios.luau -a dos
 ```
 
 ## Media and license

@@ -5,6 +5,7 @@ The MIT license covers Luau XT's own source code and documentation. Third-party 
 | Component | Version and upstream terms |
 | --- | --- |
 | GLaBIOS | [v0.4.2 source and GPLv3 license](https://github.com/640-KB/GLaBIOS/tree/v0.4.2). The builder patches the POST CPU label call, adds an assembly hook, and recomputes the ROM checksum. See [the patch](tools/prepare_media.py) and [hook source](guest/post-cpu.s). |
+| SeaBIOS and SeaVGABIOS | Optional, unmodified 1.17.0 ROMs from [QEMU 10.1.0](https://github.com/qemu/qemu/tree/v10.1.0/pc-bios). See the [upstream source and license notices](https://qemu.googlesource.com/seabios/+/refs/tags/rel-1.17.0) and the [pinned ROM hashes](tools/prepare_seabios.py). |
 | Linux console font | [Linux v6.12 `font_8x8.c`](https://github.com/torvalds/linux/blob/v6.12/lib/fonts/font_8x8.c), marked GPL-2.0. The media builder extracts the glyph bytes. |
 | FreeDOS | [1.4 Floppy Edition](https://www.freedos.org/download/), including the [kernel](https://github.com/FDOS/kernel) and [FreeCOM](https://github.com/FDOS/freecom). Optional packages have their own terms. See the package metadata. |
 | GRUB Legacy and FREESCO | Optional images use [Debian's GRUB 0.97 package](https://archive.debian.org/debian/pool/main/g/grub/) and [FREESCO 0.4.5](https://freesco.sourceforge.net/), including its Linux 2.0.40 kernel and RAM disk. See the upstream notices and the pinned [Debian nano, glibc, and ncurses packages](tools/prepare_grub.py) used in the optional Linux image. |

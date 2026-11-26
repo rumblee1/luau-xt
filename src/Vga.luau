@@ -57,6 +57,7 @@ function Vga.new()
 		crtcIndex = 0,
 		attributeIndex = 0,
 		attributeData = false,
+		attributeVideoEnabled = false,
 		miscellaneous = 0,
 		latches = 0,
 		sequencerIndex = 0,
@@ -191,6 +192,15 @@ function Vga:writeMemory(offset, value)
 	end
 end
 
+function Vga:colorTextState()
+	local mode = buffer.readu8(self.attribute, 0x10)
+	local visible = self.attributeVideoEnabled
+		and band(buffer.readu8(self.sequencer, 1), 0x20) == 0
+		and band(buffer.readu8(self.graphics, 6), 0x0D) == 0x0C
+		and band(mode, 1) == 0
+	return visible, band(mode, 8) ~= 0
+end
+
 function Vga:readPort(port)
 	if port == 0x3DA then
 		self.attributeData = false
@@ -242,6 +252,7 @@ function Vga:writePort(port, value)
 			end
 		else
 			self.attributeIndex = band(value, 31)
+			self.attributeVideoEnabled = band(value, 0x20) ~= 0
 		end
 		self.attributeData = not self.attributeData
 	elseif port == 0x3C2 then

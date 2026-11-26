@@ -60,23 +60,31 @@ end
 
 function CgaText:update(bus, board)
 	local phase = math.floor(board.pit.now / 596591) % 2
+	local visible, blink
+	if bus.pc then
+		visible, blink = bus.vga:colorTextState()
+	else
+		visible = band(board.cgaMode, 8) ~= 0 and band(board.cgaMode, 2) == 0
+		blink = band(board.cgaMode, 0x20) ~= 0
+	end
 	if
 		self.bus == bus
 		and self.memoryVersion == bus.videoVersion
 		and self.registerVersion == board.videoVersion
 		and self.phase == phase
+		and self.visible == visible
+		and self.blink == blink
 	then
 		return nil
 	end
 	self.bus, self.memoryVersion, self.registerVersion, self.phase = bus, bus.videoVersion, board.videoVersion, phase
+	self.visible, self.blink = visible, blink
 
 	local crtc = board.crtc
 	local start = buffer.readu8(crtc, 12) * 256 + buffer.readu8(crtc, 13)
 	local cursor = buffer.readu8(crtc, 14) * 256 + buffer.readu8(crtc, 15)
 	local cursorControl = buffer.readu8(crtc, 10)
 	local cursorMode = extract(cursorControl, 5, 2)
-	local visible = band(board.cgaMode, 8) ~= 0 and band(board.cgaMode, 2) == 0
-	local blink = band(board.cgaMode, 0x20) ~= 0
 	local cursorVisible = cursorMode == 0 or (cursorMode >= 2 and phase == 0)
 	local first, last = ROWS, -1
 

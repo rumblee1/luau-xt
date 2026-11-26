@@ -19,18 +19,24 @@ gui.Name = "LuauXT"
 gui.ResetOnSpawn = false
 gui:SetAttribute("AudioVolume", 0.65)
 
+local backdrop = Instance.new("Frame")
+backdrop.Size = UDim2.fromScale(1, 1)
+backdrop.BackgroundColor3 = Color3.new(1, 1, 1)
+backdrop.BorderSizePixel = 0
+backdrop.Parent = gui
+
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.Position = UDim2.fromScale(0.5, 0.5)
 panel.Size = UDim2.fromScale(0.92, 0.92)
 panel.BackgroundTransparency = 1
-panel.Parent = gui
+panel.Parent = backdrop
 
 local monitor = Instance.new("Frame")
 monitor.AnchorPoint = Vector2.new(0.5, 0)
 monitor.Position = UDim2.fromScale(0.5, 0)
 monitor.Size = UDim2.new(1, 0, 1, -44)
-monitor.BackgroundColor3 = Color3.new(0, 0, 0)
+monitor.BackgroundColor3 = Color3.new(1, 1, 1)
 monitor.BorderSizePixel = 0
 monitor.Parent = panel
 
@@ -44,13 +50,14 @@ screen.Name = "Display"
 screen.Size = UDim2.fromScale(1, 1)
 screen.BackgroundTransparency = 1
 screen.ResampleMode = Enum.ResamplerMode.Pixelated
+screen.Visible = false
 screen.Parent = monitor
 
 local text = Instance.new("TextLabel")
 text.Size = UDim2.new(1, -24, 1, -24)
 text.Position = UDim2.fromOffset(12, 12)
 text.BackgroundTransparency = 1
-text.TextColor3 = Color3.fromRGB(224, 226, 224)
+text.TextColor3 = Color3.new(0, 0, 0)
 text.Font = Enum.Font.Code
 text.TextSize = 16
 text.TextXAlignment = Enum.TextXAlignment.Left
@@ -63,9 +70,10 @@ local power = Instance.new("TextButton")
 power.AnchorPoint = Vector2.new(0.5, 1)
 power.Position = UDim2.fromScale(0.5, 1)
 power.Size = UDim2.fromOffset(128, 36)
-power.BackgroundColor3 = Color3.fromRGB(29, 33, 32)
-power.BorderSizePixel = 0
-power.TextColor3 = Color3.fromRGB(238, 241, 237)
+power.BackgroundColor3 = Color3.new(1, 1, 1)
+power.BorderSizePixel = 1
+power.BorderColor3 = Color3.fromRGB(200, 200, 200)
+power.TextColor3 = Color3.new(0, 0, 0)
 power.Font = Enum.Font.GothamMedium
 power.TextSize = 15
 power.Text = "Power on"
@@ -74,49 +82,36 @@ power.Parent = panel
 gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 local media = modules:WaitForChild("media", 5)
-local biosSource = media and media:WaitForChild("Bios", 5)
-local diskSource = media and media:WaitForChild("Disk", 5)
+local seaBiosSource = media and media:WaitForChild("SeaBios", 5)
+local seaVgaSource = media and media:WaitForChild("SeaVgaBios", 5)
 local fontSource = media and media:WaitForChild("Font", 5)
-if not biosSource or not diskSource or not fontSource then
-	text.Text = "Boot media is missing. Run tools/prepare_media.py and sync again."
+if not seaBiosSource or not seaVgaSource or not fontSource then
+	text.Text = "Boot media is missing. Run tools/prepare_media.py and tools/prepare_seabios.py, then sync with Rojo."
 	power.Visible = false
 	return
 end
 
-local atSource = media:FindFirstChild("AtBios")
-local vgaSource = media:FindFirstChild("VgaBios")
-local vgaDiskSource = media:FindFirstChild("vga_disk")
-local profiles = { { name = "Luau XT", disk = "full_disk" } }
-if atSource then
-	table.insert(profiles, { name = "386 FreeDOS", disk = "full_disk", at = true })
-	if media:FindFirstChild("grub_disk") then
-		table.insert(profiles, { name = "386 GRUB", disk = "grub_disk", at = true })
+local floppy = media:FindFirstChild("vga_disk")
+local profiles = {}
+local function addProfile(name, diskName, bootFloppy)
+	local disk = media:FindFirstChild(diskName)
+	if disk or bootFloppy then
+		table.insert(profiles, { name = name, disk = disk, floppy = bootFloppy })
 	end
-	if media:FindFirstChild("linux_disk") then
-		table.insert(profiles, { name = "386 Linux", disk = "linux_disk", at = true })
-	end
-	if vgaSource and vgaDiskSource then
-		table.insert(profiles, { name = "386 VGA", at = true, vga = true, disk = "vga_hard_disk" })
-		if media:FindFirstChild("vga_windows_disk") then
-			table.insert(profiles, { name = "386 Windows 3.0", at = true, vga = true, disk = "vga_windows_disk" })
-		end
-		if media:FindFirstChild("vga_windows_standard_disk") then
-			table.insert(profiles, {
-				name = "386 Windows 3.0 /S",
-				at = true,
-				vga = true,
-				disk = "vga_windows_standard_disk",
-			})
-		end
-		if media:FindFirstChild("vga_windows31_disk") then
-			table.insert(profiles, {
-				name = "386 Windows 3.1 /S",
-				at = true,
-				vga = true,
-				disk = "vga_windows31_disk",
-			})
-		end
-	end
+end
+
+addProfile("FreeDOS", "vga_hard_disk", floppy)
+if media:FindFirstChild("full_disk") then
+	addProfile("FreeDOS Full", "full_disk", floppy)
+end
+addProfile("Linux", "linux_disk")
+addProfile("Windows 3.1", "vga_windows31_disk")
+addProfile("GRUB", "grub_disk")
+
+if #profiles == 0 then
+	text.Text = "No boot disk found. Run tools/prepare_media.py, then sync with Rojo."
+	power.Visible = false
+	return
 end
 
 local selector
@@ -132,8 +127,6 @@ if #profiles > 1 then
 	power.Position = UDim2.new(0.5, 5, 1, 0)
 end
 
-local rom = decode(require(biosSource))
-local disk = decode(require(diskSource))
 local renderer = CgaText.new(decode(require(fontSource)))
 local image, visibleImage
 local graphicsImages = {}
@@ -154,7 +147,6 @@ local ok, result = pcall(AssetService.CreateEditableImage, AssetService, {
 })
 if ok and result then
 	image = result
-	showImage(image)
 else
 	warn("CGA image unavailable. Using the text display.", result)
 end
@@ -220,25 +212,11 @@ local function startMachine(profile)
 		return machine:restart()
 	end
 
-	local atRom = profile.at and decode(require(atSource)) or nil
-	local diskRom = media:FindFirstChild("DiskRom")
-	if profile.vga then
-		local floppy = loadDisk(vgaDiskSource)
-		local vgaRom = decode(require(vgaSource))
-		local hardDisk = media:FindFirstChild(profile.disk)
-		if hardDisk then
-			assert(diskRom, "VGA hard disk firmware is missing.")
-			return Machine.new(rom, floppy, decode(require(diskRom)), loadDisk(hardDisk), atRom, vgaRom)
-		end
-		return Machine.new(rom, floppy, nil, nil, atRom, vgaRom)
-	end
-
-	local fullDisk = media:FindFirstChild(profile.disk)
-	if not fullDisk and profile.disk == "full_disk" then
-		return Machine.new(rom, disk, nil, nil, atRom)
-	end
-	assert(diskRom and fullDisk, "The selected boot disk or disk firmware is missing.")
-	return Machine.new(rom, disk, decode(require(diskRom)), loadDisk(fullDisk), atRom)
+	local firmware = loadDisk(seaBiosSource)
+	local vgaRom = decode(require(seaVgaSource))
+	local floppyImage = profile.floppy and loadDisk(profile.floppy) or nil
+	local hardDisk = profile.disk and loadDisk(profile.disk) or nil
+	return Machine.newSeaBios(firmware, vgaRom, floppyImage, hardDisk)
 end
 
 if selector then
@@ -252,12 +230,28 @@ if selector then
 	end)
 end
 
+local function startRuntime()
+	audioOutput = AudioOutput.new(gui, machine.board)
+	frameBudget = FrameBudget.new(Machine.PIT_HZ)
+	table.clear(held)
+	table.clear(scanCount)
+	mouseButtons, mouseDX, mouseDY = 0, 0, 0
+	lastMousePosition = nil
+	displayedVersion, displayedRegisters = -1, -1
+	text.Text = ""
+	text.TextWrapped = false
+end
+
 power.Activated:Connect(function()
 	if loading then
 		return
 	end
 	loading = true
-	power.Text = "Loading disk"
+	power.Text = "Loading…"
+	screen.Visible = false
+	text.TextScaled = false
+	text.TextWrapped = true
+	text.Text = "Loading " .. profiles[selectedProfile].name .. "…"
 	stopAudio()
 	local poweredAt = os.clock()
 	local profile = profiles[selectedProfile]
@@ -267,7 +261,9 @@ power.Activated:Connect(function()
 		return
 	end
 	if not started then
-		text.TextWrapped = true
+		failed = true
+		restoreCamera()
+		power.Modal = false
 		text.Text = tostring(result)
 		power.Text = "Retry"
 		warn(result)
@@ -275,21 +271,13 @@ power.Activated:Connect(function()
 	end
 
 	machine = result
-	audioOutput = AudioOutput.new(gui, machine.board)
 	runningProfile = selectedProfile
-	frameBudget = FrameBudget.new(Machine.PIT_HZ)
+	startRuntime()
 	if performance then
 		performance:start(profile.name, poweredAt, os.clock())
 	end
 	failed = false
 	captureCamera()
-	table.clear(held)
-	table.clear(scanCount)
-	mouseButtons, mouseDX, mouseDY = 0, 0, 0
-	lastMousePosition = nil
-	displayedVersion, displayedRegisters = -1, -1
-	text.Text = ""
-	text.TextWrapped = false
 	power.Text = "Restart"
 	power.Modal = true
 end)
@@ -320,7 +308,7 @@ local function releaseKey(key)
 end
 
 local function guestAcceptsInput()
-	return machine ~= nil and not failed and UserInputService:GetFocusedTextBox() == nil
+	return machine ~= nil and not failed and not loading and UserInputService:GetFocusedTextBox() == nil
 end
 
 local mouseButton = {
@@ -384,7 +372,7 @@ local keyDown = UserInputService.InputBegan:Connect(function(input)
 		held[key] = scan
 		scanCount[scan] = (scanCount[scan] or 0) + 1
 		if scanCount[scan] == 1 then
-			if performance and scan == scanCodes.Return and profiles[runningProfile].disk == "vga_hard_disk" then
+			if performance and scan == scanCodes.Return and profiles[runningProfile].name == "FreeDOS" then
 				local vga = machine.bus.vga
 				if vga and not vga.active then
 					local screenText = readScreen(machine.bus, machine.board):gsub("%s+$", "")
@@ -448,7 +436,9 @@ local function runSlice(pit, target, deadline)
 			if pit.now >= target then
 				break
 			end
-			machine:step(target - pit.now)
+			if machine:step(target - pit.now) then
+				return true
+			end
 		end
 	end
 end
@@ -474,7 +464,7 @@ local heartbeat = RunService.Heartbeat:Connect(function(elapsed)
 	local startingClocks = pit.now
 	local startedAt = os.clock()
 	debug.profilebegin("Luau XT CPU")
-	local ran, fault = pcall(runSlice, pit, startingClocks + credit, startedAt + budget)
+	local ran, resetOrError = pcall(runSlice, pit, startingClocks + credit, startedAt + budget)
 	debug.profileend()
 	local devicesStartedAt = os.clock()
 	local cpuSeconds = devicesStartedAt - startedAt
@@ -483,10 +473,18 @@ local heartbeat = RunService.Heartbeat:Connect(function(elapsed)
 		stopAudio()
 		restoreCamera()
 		screen.Visible = false
+		text.TextScaled = false
 		text.TextWrapped = true
-		text.Text = tostring(fault)
+		text.Text = tostring(resetOrError)
 		power.Modal = false
-		warn(fault)
+		warn(resetOrError)
+		return
+	elseif resetOrError then
+		stopAudio()
+		startRuntime()
+		if performance then
+			performance:start(profiles[runningProfile].name, startedAt, os.clock())
+		end
 		return
 	end
 

@@ -1,7 +1,10 @@
+local AtaDisk = if script then require(script.Parent.AtaDisk) else require("./AtaDisk")
+local PcFirmware = if script then require(script.Parent.PcFirmware) else require("./PcFirmware")
 local Vga = if script then require(script.Parent.Vga) else require("./Vga")
 
 local ADDRESS_SPACE = 0x100000
 local ADDRESS_MASK = ADDRESS_SPACE - 1
+local FIRMWARE_BASE = 0xFFFC0000
 local EXTENDED_SIZE = 16 * 1024 * 1024
 local RAM_SIZE = 640 * 1024
 local CGA_START = 0xB8000
@@ -35,6 +38,13 @@ function Bus:mountSystemRom(image)
 	buffer.copy(self.memory, self.romStart, image)
 end
 
+function Bus:mountSeaBios(image, vgaRom, hardDisk)
+	assert(self.at and buffer.len(image) == 0x40000, "Expected a 256 KiB system ROM")
+	self.firmware = image
+	self.pc = PcFirmware.new(vgaRom, hardDisk)
+	self.vga = Vga.new()
+end
+
 function Bus:mountVgaRom(image)
 	local size = buffer.len(image)
 	assert(self.at and size > 0 and size <= 0x8000, "Invalid VGA option ROM")
@@ -62,6 +72,9 @@ function Bus:physical(address)
 		return bit32.band(address, ADDRESS_MASK)
 	end
 	address = bit32.band(address, 0xFFFFFFFF)
+	if self.firmware and address >= FIRMWARE_BASE then
+		return address
+	end
 	if address >= 0xFFFF0000 then
 		return 0xF0000 + bit32.band(address, 0xFFFF)
 	end
@@ -87,6 +100,16 @@ function Bus:read8(address)
 		return buffer.readu8(self.memory, address)
 	end
 	address = self:physical(address)
+	if self.firmware then
+		if address >= FIRMWARE_BASE then
+			return buffer.readu8(self.firmware, address - FIRMWARE_BASE)
+		elseif address >= 0xC0000 and address < ADDRESS_SPACE then
+			if bit32.band(self.pc:shadow(address), 1) ~= 0 then
+				return buffer.readu8(self.memory, address)
+			end
+			return if address >= 0xE0000 then buffer.readu8(self.firmware, address - 0xC0000) else 0xFF
+		end
+	end
 	if address < RAM_SIZE or (self.at and address >= ADDRESS_SPACE and address < EXTENDED_SIZE) then
 		return buffer.readu8(self.memory, address)
 	end
@@ -115,6 +138,12 @@ function Bus:write8(address, value)
 		return
 	end
 	address = self:physical(address)
+	if self.firmware and address >= 0xC0000 and address < ADDRESS_SPACE then
+		if bit32.band(self.pc:shadow(address), 2) ~= 0 then
+			buffer.writeu8(self.memory, address, value)
+		end
+		return
+	end
 	if address < RAM_SIZE or (self.at and address >= ADDRESS_SPACE and address < EXTENDED_SIZE) then
 		buffer.writeu8(self.memory, address, value)
 		return
@@ -187,6 +216,12 @@ function Bus:transferDisk(disk, diskOffset, segment, offset, length, writeDisk)
 end
 
 function Bus:readPort(port)
+	if self.pc and port >= 0x511 then
+		local value = self.pc:read(port)
+		if value ~= nil then
+			return value
+		end
+	end
 	if self.vga and port >= 0x3C0 and port <= 0x3DA then
 		local value = self.vga:readPort(port)
 		if value ~= nil then
@@ -197,11 +232,51 @@ function Bus:readPort(port)
 end
 
 function Bus:writePort(port, value)
+	if self.pc and port >= 0xCF8 and self.pc:write(port, value) then
+		return
+	end
 	if self.vga and port >= 0x3C0 and port <= 0x3DA and self.vga:writePort(port, value) then
 		return
 	end
 	if self.io then
 		self.io:write(port, value)
+	end
+end
+
+function Bus:readIo(port, size)
+	if self.pc and port == PcFirmware.PCI_CONFIG_ADDRESS and size == 4 then
+		return self.pc.pciAddress
+	end
+	local disk = self.pc and port == AtaDisk.DATA_PORT and self.io and self.io.hardDisk
+	if disk then
+		return disk:readData(size)
+	end
+	local value = 0
+	for index = 0, size - 1 do
+		value += self:readPort(bit32.band(port + index, 0xFFFF)) * 256 ^ index
+	end
+	return value
+end
+
+function Bus:writeIo(port, value, size)
+	if self.pc then
+		-- The PCI address register is a dword. Splitting it into bytes would
+		-- write to the overlapping PIIX reset control port at CF9h.
+		if port == PcFirmware.PCI_CONFIG_ADDRESS and size > 1 then
+			if size == 4 then
+				self.pc.pciAddress = value
+			end
+			return
+		elseif port == PcFirmware.FW_CFG_SELECTOR and size == 2 then
+			self.pc:selectFile(value)
+			return
+		elseif port == AtaDisk.DATA_PORT and self.io and self.io.hardDisk then
+			self.io.hardDisk:writeData(value, size)
+			return
+		end
+	end
+	for index = 0, size - 1 do
+		self:writePort(bit32.band(port + index, 0xFFFF), bit32.extract(value, index * 8, 8))
 	end
 end
 

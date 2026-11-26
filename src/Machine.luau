@@ -11,17 +11,21 @@ local Machine = {
 }
 Machine.__index = Machine
 
-function Machine.new(rom, disk, diskRom, hardDisk, atRom, vgaRom)
-	local at = atRom ~= nil
+local function newMachine(rom, disk, diskRom, hardDisk, atRom, vgaRom, seaBios)
+	local at = atRom ~= nil or seaBios == true
 	local bus = Bus.new(at)
-	bus:mountSystemRom(rom)
-	if vgaRom then
+	if seaBios then
+		bus:mountSeaBios(rom, vgaRom, hardDisk)
+	else
+		bus:mountSystemRom(rom)
+	end
+	if vgaRom and not seaBios then
 		bus:mountVgaRom(vgaRom)
 	end
 	if diskRom and hardDisk then
 		bus:mountDiskRom(diskRom)
 	end
-	if at then
+	if atRom then
 		bus:mountAtRom(atRom)
 	end
 	return setmetatable({
@@ -35,15 +39,24 @@ function Machine.new(rom, disk, diskRom, hardDisk, atRom, vgaRom)
 	}, Machine)
 end
 
+function Machine.new(rom, disk, diskRom, hardDisk, atRom, vgaRom)
+	return newMachine(rom, disk, diskRom, hardDisk, atRom, vgaRom, false)
+end
+
+function Machine.newSeaBios(rom, vgaRom, disk, hardDisk)
+	return newMachine(rom, disk, nil, hardDisk, nil, vgaRom, true)
+end
+
 function Machine:restart()
 	local hardDisk = self.board.hardDisk
-	return Machine.new(
+	return newMachine(
 		self.rom,
 		self.board.floppy.image,
 		self.diskRom,
 		hardDisk and hardDisk.image,
 		self.atRom,
-		self.vgaRom
+		self.vgaRom,
+		self.bus.firmware ~= nil
 	)
 end
 
@@ -65,10 +78,16 @@ function Machine:step(haltLimit)
 	local flags = bit32.band(cpu.flags, 0x300)
 	-- The 386 RAM fast path can also batch with interrupts enabled,
 	-- stopping at the next device event.
-	local repeatLimit = if flags == 0 or (flags == 0x200 and self.atRom and not cpu.interruptShadow) then 64 else 1
+	local repeatLimit = if flags == 0 or (flags == 0x200 and self.bus.at and not cpu.interruptShadow) then 64 else 1
 	local iterations = cpu:step(repeatLimit) or 1
+	local pc = self.bus.pc
+	if pc and pc.resetRequested then
+		local restarted = self:restart()
+		self.bus, self.board, self.cpu = restarted.bus, restarted.board, restarted.cpu
+		return true
+	end
 	-- The PIT is driven by approximate guest time. HLT leaves the timers running.
-	local ticks = self.atRom and 1 or 3
+	local ticks = self.bus.at and 1 or 3
 	board:advance(cpu.halted and 32 or ticks * iterations)
 end
 

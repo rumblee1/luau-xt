@@ -1057,7 +1057,12 @@ end
 
 function Cpu:portInstruction(opcode, port, width)
 	self:checkPort(port, width)
-	return Cpu8088.portInstruction(self, opcode, port, width)
+	local size = widthBytes(width)
+	if band(opcode, 2) == 0 then
+		self:setRegister(0, width, self.bus:readIo(port, size))
+	else
+		self.bus:writeIo(port, self:getRegister(0, width), size)
+	end
 end
 
 function Cpu:multiplyDivide(operation, value, width)
@@ -1164,16 +1169,9 @@ function Cpu:additionalOpcode(opcode, width, override, startIp, repeatPrefix)
 		local opWidth = band(opcode, 1) ~= 0 and width
 		self:checkPort(port, opWidth)
 		if input then
-			local value = 0
-			for byte = 0, size - 1 do
-				value += self.bus:readPort(band(port + byte, UINT16)) * 256 ^ byte
-			end
-			self:write(segment, index, opWidth, value)
+			self:write(segment, index, opWidth, self.bus:readIo(port, size))
 		else
-			local value = self:read(segment, index, opWidth)
-			for byte = 0, size - 1 do
-				self.bus:writePort(band(port + byte, UINT16), extract(value, 8 * byte, 8))
-			end
+			self.bus:writeIo(port, self:read(segment, index, opWidth), size)
 		end
 		self:setRegister(reg, addressWidth, index + delta)
 		if repeatPrefix then
@@ -1465,6 +1463,15 @@ function Cpu:extendedOpcode(opcode, width, override)
 		if value ~= 0 then
 			self:setRegister(register, width, opcode == 0xBC and bit32.countrz(value) or 31 - bit32.countlz(value))
 		end
+	elseif self.bus.pc and opcode >= 0xC8 and opcode <= 0xCF then -- BSWAP
+		local register = opcode - 0xC8
+		local value = self:getRegister(register, 32)
+		self:setRegister(register, 32, bit32.byteswap(value))
+	elseif self.bus.pc and (opcode == 0x08 or opcode == 0x09) then -- INVD / WBINVD
+		if self.cpl ~= 0 then
+			fault(13, 0)
+		end
+		-- There is no guest CPU cache to flush.
 	elseif opcode == 0xFF then -- Reserved encoding
 		fault(6)
 	else

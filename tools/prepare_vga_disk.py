@@ -1,4 +1,4 @@
-"""Build an optional BIOS-bootable hard disk for the 386 VGA profile."""
+"""Prepare the FreeDOS library disk or Windows 3.1 disk for SeaBIOS."""
 import argparse
 import base64
 from hashlib import sha256
@@ -73,21 +73,6 @@ def install_fastdoom(source, tree):
         b"@ECHO OFF\r\nC:\r\nCD \\DOOM\r\n"
         b"FDOOM -386DX -POTATO -NOMELT -NOVSYNC -FLATSPAN -FLATSKY -WARP 1 1 -SIZE 3 -NOSOUND -NOMOUSE -CONFIG FDOOM.CFG\r\n"
     )
-
-
-def unpack_windows_setup(archive, target, work):
-    disks = work / "windows-floppies"
-    disks.mkdir()
-    subprocess.run(["7z", "x", "-y", f"-o{disks}", str(archive.resolve()), "DISK0?.IMG", "-r"],
-                   check=True, stdout=subprocess.DEVNULL)
-    target.mkdir()
-    for number in range(1, 6):
-        matches = list(disks.rglob(f"DISK{number:02}.IMG"))
-        if len(matches) != 1 or matches[0].stat().st_size != 1228800:
-            raise ValueError("Expected the five 1.2 MB Windows 3.0 setup floppy images")
-        subprocess.run(["mcopy", "-n", "-i", matches[0], "::*", target], check=True)
-    if not any(path.name.upper() == "SETUP.EXE" for path in target.iterdir()):
-        raise ValueError("The Windows setup disks did not contain SETUP.EXE")
 
 
 def unpack_windows31_setup(directory, tree):
@@ -219,7 +204,7 @@ def update_library(folder, work, clip, bad_apple, fastdoom=None):
     return disk.read_bytes()
 
 
-def windows_standard_image(image, work, *, windows31=False):
+def windows31_standard_image(image, work):
     disk = work / "windows_standard.img"
     disk.write_bytes(image)
     partitions = image[446:510]
@@ -236,10 +221,7 @@ def windows_standard_image(image, work, *, windows31=False):
     def read(name):
         return subprocess.check_output(["mtype", "-i", volume, f"::/{name}"])
 
-    required = ("HIMEM.SYS", "WINDOWS/WIN.COM")
-    if windows31:
-        required += ("WINDOWS/SYSTEM.INI", "WINDOWS/PROGMAN.EXE")
-    for name in required:
+    for name in ("HIMEM.SYS", "WINDOWS/WIN.COM", "WINDOWS/SYSTEM.INI", "WINDOWS/PROGMAN.EXE"):
         if subprocess.run(["mdir", "-i", volume, f"::/{name}"], capture_output=True).returncode:
             raise ValueError(f"Standard Mode requires {name} on the installed disk")
     config = read("CONFIG.SYS")
@@ -251,8 +233,6 @@ def windows_standard_image(image, work, *, windows31=False):
         rb"\g<1> /S\2", startup, count=1, flags=re.I | re.M,
     )
     if not count:
-        if not windows31:
-            raise ValueError("Expected C:\\WINDOWS\\WIN.COM /R or /S in AUTOEXEC.BAT")
         startup = startup.rstrip(b"\r\n") + b"\r\nC:\\WINDOWS\\WIN.COM /S\r\n"
     for name, content in (("CONFIG.SYS", config), ("AUTOEXEC.BAT", startup)):
         path = work / name
@@ -267,32 +247,26 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "src/media")
     parser.add_argument("--doom-shareware", type=Path, help="Original doom19s.zip to install in C:\\DOOM")
     parser.add_argument("--fastdoom", type=Path, help="Official FastDoom_1.3.0.zip release archive")
-    parser.add_argument("--windows-setup", type=Path, help="Local Windows 3.0 five-floppy 7z setup archive")
-    parser.add_argument("--windows-profile", action="store_true", help="Use the separate 386 Windows 3.0 profile")
-    parser.add_argument("--windows-standard", action="store_true", help="Boot an installed Windows 3.0 disk in Standard Mode")
     parser.add_argument("--windows31-setup", type=Path, help="Folder containing six Windows 3.1 floppy images")
     parser.add_argument("--windows31-profile", action="store_true", help="Import a Windows 3.1 disk that boots with WIN /S")
     parser.add_argument("--guest-dir", type=Path, help="Directory of files to copy to C:")
     parser.add_argument("--clip", type=Path, help="VGA clip to install as C:\\VIDEO.VCL")
     parser.add_argument("--bad-apple", type=Path, help="Local video to convert for the BADAPPLE command")
     parser.add_argument("--disk-image", type=Path, help="Bootable raw image with 16 heads and 32 sectors per track")
-    parser.add_argument("--update", action="store_true", help="Refresh the library on the existing 386 VGA disk")
+    parser.add_argument("--update", action="store_true", help="Refresh the library on the existing FreeDOS disk")
     args = parser.parse_args()
-    windows31 = args.windows31_setup is not None or args.windows31_profile
-    windows = bool(args.windows_setup or args.windows_profile or windows31)
-    if windows31 and (args.windows_setup or args.windows_profile or args.windows_standard or args.update):
+    windows = args.windows31_setup is not None or args.windows31_profile
+    if windows and args.update:
         parser.error("Use Windows 3.1 setup or import as a separate build")
     if args.windows31_setup and (not args.windows31_setup.is_dir() or args.windows31_profile):
         parser.error("--windows31-setup requires a floppy folder and builds its own disk")
     if args.windows31_profile and not args.disk_image:
         parser.error("--windows31-profile requires --disk-image")
-    if args.windows_standard and not (args.windows_profile and args.disk_image):
-        parser.error("--windows-standard requires --windows-profile and an installed --disk-image")
-    if args.update and (args.disk_image or args.doom_shareware or args.windows_setup or args.windows_profile or args.guest_dir):
+    if args.update and (args.disk_image or args.doom_shareware or args.guest_dir):
         parser.error("--update uses the existing FreeDOS VGA disk and accepts --clip, --bad-apple, or --fastdoom")
     if args.update and not (args.output / "vga_hard_disk" / "Index.luau").is_file():
         parser.error("--update requires an existing VGA hard disk in --output")
-    if args.disk_image and (args.guest_dir or args.clip or args.bad_apple or args.doom_shareware or args.windows_setup or args.windows31_setup):
+    if args.disk_image and (args.guest_dir or args.clip or args.bad_apple or args.doom_shareware or args.windows31_setup):
         parser.error("--disk-image takes a complete disk. Build a new FreeDOS disk to add files.")
     if args.guest_dir and not args.guest_dir.is_dir():
         parser.error("--guest-dir must be a directory")
@@ -313,11 +287,9 @@ def main():
         tools += ("mcopy", "mdir", "mmd", "mtype")
     elif not args.disk_image:
         tools += ("mcopy", "mkfs.fat")
-    if args.windows_setup or args.windows31_setup:
-        tools += ("7z",)
     if args.windows31_setup:
-        tools += ("mdir",)
-    if args.windows_standard or args.windows31_profile:
+        tools += ("7z", "mdir")
+    if args.windows31_profile:
         tools += ("mcopy", "mdir", "mtype")
     for tool in tools:
         if shutil.which(tool) is None:
@@ -334,8 +306,8 @@ def main():
             image = args.disk_image.read_bytes()
             if image[510:512] != bytes.fromhex("55aa"):
                 parser.error("--disk-image must contain a BIOS boot sector")
-            if args.windows_standard or args.windows31_profile:
-                image = windows_standard_image(image, work, windows31=args.windows31_profile)
+            if args.windows31_profile:
+                image = windows31_standard_image(image, work)
         else:
             args.cache.mkdir(parents=True, exist_ok=True)
             release = fetch(args.cache, "FD14-FloppyEdition.zip")
@@ -350,8 +322,6 @@ def main():
                 write_doom_launchers(tree)
                 if args.fastdoom:
                     install_fastdoom(args.fastdoom, tree)
-            if args.windows_setup:
-                unpack_windows_setup(args.windows_setup, tree / "SETUP", work)
             if args.windows31_setup:
                 unpack_windows31_setup(args.windows31_setup, tree)
             startup = b"@ECHO OFF\r\nPATH C:\\;A:\\\r\nPROMPT $P$G\r\n"
@@ -374,15 +344,9 @@ def main():
         args.output.mkdir(parents=True, exist_ok=True)
         if not args.update:
             module(args.output / "DiskRom.luau", option_rom("hard-disk-rom.s", work))
-        if windows31:
-            profile = "vga_windows31_disk"
-        elif args.windows_standard:
-            profile = "vga_windows_standard_disk"
-        else:
-            profile = "vga_windows_disk" if args.windows_setup or args.windows_profile else "vga_hard_disk"
-        folder = args.output / profile
-        disk_modules(folder, image)
-        print(f"Prepared {len(image) // 1024} KiB of bootable storage for 386 VGA")
+        profile = "vga_windows31_disk" if windows else "vga_hard_disk"
+        disk_modules(args.output / profile, image)
+        print(f"Prepared {len(image) // 1024} KiB of bootable storage in {profile}")
 
 
 if __name__ == "__main__":
